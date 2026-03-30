@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* ใช้เครื่องหมายคำพูดคู่ และ Path ที่กระชับขึ้น */
+@source "../app/**/*.{ts,tsx}";
+@source "./components/**/*.{ts,tsx}";
+
+/* ลองปิดตัวนี้ดูก่อน เพราะถ้ายังไม่ได้ติดตั้ง package มันจะทำให้เกิด Error 500 */
+/* @import "tw-animate-css"; */
