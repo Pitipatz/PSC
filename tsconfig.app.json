@@ -28,5 +28,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "node_modules",
+    "src/utils/supabase/function/**/*.ts",
+    "src/utils/supabase/function/**/*.tsx"
+  ]
 }
