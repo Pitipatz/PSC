@@ -5,6 +5,7 @@ import HistoryPage from './pages/HistoryPage';
 import UserManagementPage from './pages/admin/UserManagementPage';
 import ProfilePage from './pages/ProfilePage';
 import { AdminRoute } from './ProtectedRoute'; // Import ตัวที่เราสร้าง
+import ResetPasswordPage from './pages/ResetPasswordPage';
 // import MyCoolErrorPage from './pages/MyCoolErrorPage'; // Import เข้ามา!
 
 export const router = createBrowserRouter([
@@ -40,6 +41,10 @@ export const router = createBrowserRouter([
   {
     path: '*',
     element: <Navigate to="/" />, // ถ้าพิมพ์มั่วให้กลับไปหน้าแรก
+  },
+  {
+    path: '/reset-password',
+    element: <ResetPasswordPage />,
   },
   /*
   {

@@ -8,6 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { resizeImage } from '../utils/imageresizer'; // หรือพาธที่ถูกต้องตามโครงสร้างโปรเจกต์คุณ
 import { supabase } from '../utils/auth'; // ตรวจสอบ path ของ supabase client ของคุณ
 import { getCurrentUser } from '../utils/auth';
+import { getBranchLineGroupId } from '../services/branchService';
+import { createPriceCheckFlex } from '../utils/flexTemplates';
+import { sendLinePush } from '../services/lineService';
+import { updateLineNotifyStatus } from '../utils/logger';
 // import { logPriceCheck } from '../utils/logger';
 
 
@@ -36,6 +40,7 @@ interface VehicleType {
 }
 
 export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormProps) {
+
   // 1. State สำหรับข้อมูลฟอร์ม
   const [formData, setFormData] = useState<TruckData>({
     brand: '',
@@ -48,6 +53,7 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
     images: [],
     hasTrailer: false, // ✅ กำหนดค่าเริ่มต้น
   });
+  
 
   // 2. State อื่นๆ
   const [isLoading, setIsLoading] = useState(false);
@@ -55,9 +61,8 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
   const [isLoadingTypes, setIsLoadingTypes] = useState(true);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [otherBrand, setOtherBrand] = useState('');
-
-  // 🚩 เพิ่มการดึง currentUser ไว้ตรงนี้ เพื่อใช้ใน handleSendLine
   const currentUser = getCurrentUser();
+  const [isLineSent, setIsLineSent] = useState(false);
 
   // ดึงข้อมูลลักษณะรถ
   useEffect(() => {
@@ -149,40 +154,113 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
   };
 
   // ✅ ฟังก์ชันจัดการรูปภาพหลายรูป (บีบอัด + Preview + เก็บข้อมูล)
-  // TruckPriceForm.tsx
   const handleSendLine = async () => {
-    try {
-      // 🚩 currentUser.name จะไม่ Error แล้วเพราะเราประกาศไว้ด้านบนสุดของ Component
-      const { error } = await supabase.functions.invoke('line-notify', {
-        body: { 
-          to: "ID_LINE_GROUP", 
-          messages: [
-            {
-              type: "flex",
-              altText: "📢 แจ้งขอยอดจัดใหม่",
-              contents: {
-                type: "bubble",
-                body: {
-                  type: "box",
-                  layout: "vertical",
-                  contents: [
-                    { type: "text", text: "📢 รบกวนขอยอดจัด", weight: "bold", color: "#1DB446" },
-                    { type: "text", text: `ยี่ห้อ: ${formData.brand}`, margin: "md" },
-                    { type: "text", text: `ราคาขาย: ${Number(formData.salePrice).toLocaleString()} บาท` },
-                    { type: "text", text: `ผู้ขอ: ${currentUser?.name || 'ไม่ระบุชื่อ'}`, size: "xs", color: "#aaaaaa" }
-                  ]
-                }
-              }
-            }
-          ]
-        }
-      });
-      if (error) throw error;
-      alert('ส่งไลน์สำเร็จ!');
-    } catch (err) {
-      console.error(err);
-      alert('ส่งไลน์ไม่สำเร็จ');
+    // 1. ดึง logId ที่มีอยู่แล้วจากการคำนวณ (ห้ามสร้างใหม่)
+    const existingLogId = calculationResult?.logId; 
+
+    if (!existingLogId) {
+      alert("ไม่พบข้อมูลการบันทึก กรุณากดคำนวณราคากลางก่อนครับ");
+      return;
     }
+    
+    const fullName = currentUser?.name || "Guset";
+    const firstName = fullName.split(' ')[0];
+    const branchName = currentUser?.branch || "รอยืนยันสาขา"; // กำหนดค่าเริ่มต้นหากไม่มีข้อมูลสาขา
+    // 1. เช็กความพร้อมข้อมูล (ใช้ logId เดิมถ้ามี หรือรัน logPriceCheck ใหม่)
+    try {
+      setIsLoading(true);
+
+      // 2. ดึงข้อมูลที่เพิ่งบันทึก (รวมถึง URLs รูปภาพ) มาส่ง LINE
+      const { data: latestLog } = await supabase
+        .from('check_price_logs')
+        .select('image_urls, brand, vehicle_type, horsepower, year, engine_number, chassis_number, sale_price, has_trailer')
+        .eq('id', existingLogId)
+        .single();
+
+      if (latestLog) {
+        // 3. สร้าง Message โดยใช้ URL จาก Database
+        const messages = createPriceCheckFlex({
+          id: existingLogId,
+          mkt: firstName,
+          brand: latestLog.brand === 'อื่นๆ' ? otherBrand : formData.brand,
+          vehicleType: latestLog.vehicle_type,
+          horsepower: latestLog.horsepower,
+          chassisNumber: latestLog.chassis_number,
+          engineNumber: latestLog.engine_number,
+          year: latestLog.year,
+          salePrice: latestLog.sale_price,
+          hasTrailer: latestLog.has_trailer,
+          images: latestLog.image_urls,
+          //editUrl: window.location.href // หรือ link ที่ต้องการให้เขากด
+        });        
+
+        // 4. ดึง Group ID และส่ง LINE
+        const groupId = await getBranchLineGroupId(currentUser?.branch ?? "ทดสอบ");
+
+        if (!groupId) {
+          alert(`ไม่พบรหัสกลุ่ม LINE สำหรับสาขา ${branchName}`);
+          return;
+        }
+
+        // 4. ส่ง LINE
+          const res = await sendLinePush(groupId, [messages]);
+          console.log("LINE API Raw Response:", res); // ดูค่าที่ส่งกลับมาจริง ๆ
+
+          // แก้ไขเงื่อนไขการเช็คให้ครอบคลุม (บางครั้ง API คืน status 200 แต่ไม่มี success: true)
+          const isSuccess = res && (res.success === true || res.status === 200 || res.ok === true);
+
+        // เช็กความสำเร็จ (รองรับทั้ง res.success หรือ res.status === 200)
+        if (isSuccess) { 
+          console.log("กำลังจะอัปเดต DB สำหรับ ID:", existingLogId);
+          
+          // ✅ 5. เรียกฟังก์ชัน Update ที่คุณมีใน logger.ts
+          const updateResult = await updateLineNotifyStatus(existingLogId);
+
+          if (updateResult) {
+            console.log("✅ อัปเดตสถานะใน DB สำเร็จ");
+            setIsLineSent(true); 
+            alert("ส่งข้อมูลและบันทึกสถานะเรียบร้อยครับ");
+          } else {
+            console.error("❌ ส่งไลน์ผ่าน แต่ Update DB ไม่สำเร็จ");
+            alert("ส่งไลน์สำเร็จ แต่ระบบบันทึกสถานะลงฐานข้อมูลไม่ได้");
+          }
+        } else {
+          console.error("❌ LINE Push Failed:", res);
+          alert("ส่ง LINE ไม่สำเร็จ");
+        }
+      }
+    } catch (error) {
+      console.error("Line Error:", error);
+      alert("เกิดข้อผิดพลาดในการส่งข้อมูล");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // เพิ่มฟังก์ชันนี้ไว้ก่อน return ครับ
+  const handleReset = () => {
+    // 1. ล้าง State ภายในฟอร์มเอง
+    setFormData({
+      brand: '',
+      vehicleType: '',
+      horsepower: '',
+      chassisNumber: '',
+      engineNumber: '',
+      year: '',
+      salePrice: 0,
+      images: [],
+      hasTrailer: false,
+    });
+    setImagePreviews([]);
+    setOtherBrand('');
+    setIsLineSent(false);
+
+    // 2. ส่ง null กลับไปบอกหน้าหลัก (onSubmit คือ prop ที่คุณรับมา)
+    if (onSubmit) {
+      onSubmit(null as any); 
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -345,18 +423,54 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
 
           {/* ✅ ปุ่มแจ้งข้อความผ่านไลน์ */}
           {calculationResult && (
-            <div className="mt-6 animate-in fade-in slide-in-from-top-4 duration-500">
-              <button
-                type="button"
-                onClick={handleSendLine}
-                className="w-full bg-[#06C755] hover:bg-[#05b34c] text-white py-2 text-lg rounded-xl shadow-lg transition-all mt-3 flex items-center justify-center gap-3 font-bold active:scale-95"
-              >
-                {/* ไอคอน LINE SVG ที่คุณให้มา */}
-                <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.771.039 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
-                </svg>
-                แจ้งข้อความผ่านไลน์
-              </button>
+            <div className="mt-6 space-y-3 animate-in fade-in slide-in-from-top-4 duration-500">
+              {/* แสดงเมื่อยังไม่ได้ส่งไลน์ */}
+              {(!calculationResult.line_notify_sent && !isLineSent) ? (
+                <div className="flex gap-3">
+                  {/* ปุ่ม LINE (ครึ่งซ้าย) */}
+                  <button
+                    type="button"
+                    onClick={handleSendLine}
+                    className="flex-1 bg-[#06C755] hover:bg-[#05b34c] text-white py-2 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 font-bold active:scale-95 text-sm md:text-base"
+                  >
+                    {/* ไอคอน LINE SVG ที่คุณให้มา */}
+                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.771.039 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                    </svg>
+                    แจ้งข้อความผ่านไลน์
+                  </button>
+                  {/* ปุ่ม Reset (ครึ่งขวา) */}
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 font-bold active:scale-95"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    เริ่มใหม่
+                  </button>
+                </div>
+              ) : (
+                /* แสดงเมื่อส่งไลน์เรียบร้อยแล้ว */
+                <div className="flex gap-3">
+                  <div className="flex-1 text-green-600 font-bold flex items-center gap-2 py-2 justify-center border-2 border-green-200 rounded-xl bg-green-50 animate-in zoom-in-95 duration-300">
+                    <span className="text-xl">✓</span>
+                    <span>ส่งข้อมูลเข้า LINE เรียบร้อยแล้ว</span>
+                  </div>
+                  {/* ปุ่มเริ่มใหม่ (แบบเต็มความกว้างหลังจากส่งไลน์เสร็จ) */}
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 font-bold active:scale-95"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    กรอกข้อมูลรถคันใหม่
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </form>

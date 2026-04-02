@@ -16,32 +16,30 @@ export async function logPriceCheck(
   truckData: any,
   centralPrice: number,
   modelFound: string,
-  trailerLoan: number // ✅ เพิ่มรับค่าราคาหาง
+  trailerLoan: number
 ) {
   try {
     const uploadedUrls: string[] = [];
 
-    // 1. จัดการอัปโหลดรูปภาพเข้า Storage ก่อน
+    // 1. จัดการอัปโหลดรูปภาพ
     if (truckData.images && truckData.images.length > 0) {
       for (let i = 0; i < truckData.images.length; i++) {
         const base64 = truckData.images[i];
+        if (!base64.startsWith('data:image')) continue; // ป้องกันข้อมูลไม่ใช่ base64
+
         const fileName = `truck_${Date.now()}_${i}.jpg`;
-        // สร้าง Folder ตาม Email ผู้ใช้ เพื่อให้เป็นระเบียบ
         const filePath = `${userEmail}/${fileName}`;
-        
         const file = base64ToFile(base64, fileName);
 
-        // อัปโหลดไปยัง Bucket ชื่อ 'truck-images' (ต้องไปสร้างใน Dashboard ก่อนนะ!)
         const { error: uploadError } = await supabase.storage
           .from('truck-images')
           .upload(filePath, file);
 
         if (uploadError) {
-          console.error(`❌ อัปโหลดรูปที่ ${i+1} พัง:`, uploadError.message);
+          console.error(`❌ อัปโหลดรูปที่ ${i + 1} พัง:`, uploadError.message);
           continue;
         }
 
-        // ดึง Public URL ของรูปที่อัปโหลดเสร็จแล้ว
         const { data: { publicUrl } } = supabase.storage
           .from('truck-images')
           .getPublicUrl(filePath);
@@ -55,30 +53,50 @@ export async function logPriceCheck(
       .insert([
         {
           user_email: userEmail,
-          user_name: userName,
+          user_name: userName, // ตรวจสอบใน DB ว่าชื่อนี้เป๊ะไหม
           brand: truckData.brand,
           vehicle_type: truckData.vehicleType,
-          horsepower: truckData.horsepower, // แมปจาก horsepower ในแอป ไปยัง horse_power ใน SQL
+          horsepower: truckData.horsepower,
           chassis_number: truckData.chassisNumber,
           engine_number: truckData.engineNumber,
           year: truckData.year,
           sale_price: parseFloat(truckData.salePrice) || 0,
           central_price: centralPrice,
-          model_found: modelFound,image_urls: uploadedUrls, // ✅ เก็บเป็น Link URL สั้นๆ แทนแล้ว!
+          model_found: modelFound,
+          image_urls: uploadedUrls,
           has_trailer: truckData.hasTrailer,
           trailer_loan_amount: trailerLoan,
+          line_notify_sent: false
         }
-      ]);
+      ])
+      .select('id')
+      .single(); // เพิ่ม .single() เพื่อให้ได้ Object เดียวแทน Array
 
     if (error) {
-      throw error;
+      console.error("❌ บันทึกไม่เข้าเพราะ:", error.message);
+      return null; 
     }
 
     console.log("✅ บันทึกข้อมูลลง Supabase เรียบร้อยแล้ว!");
-    return { success: true, data };
 
+    return data.id; // ส่ง ID กลับไปใช้งานต่อ
+  } catch (err) {
+    console.error("❌ ระบบพังที่ logger:", err);
+    return null;
+  }
+}
+
+export async function updateLineNotifyStatus(logId: string) {
+  try {
+    const { error } = await supabase
+      .from('check_price_logs')
+      .update({ line_notify_sent: true })
+      .eq('id', logId);
+
+    if (error) throw error;
+    return true;
   } catch (error) {
-    console.error("❌ ไม่สามารถบันทึกข้อมูลลง Supabase ได้:", error);
-    return { success: false, error };
+    console.error("❌ ไม่สามารถอัปเดตสถานะ LINE ได้:", error);
+    return false;
   }
 }

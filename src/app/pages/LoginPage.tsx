@@ -32,7 +32,8 @@ export default function LoginPage() {
   
   useEffect(() => {
     // 1. เช็ก Session เฉพาะตอนโหลด Component ครั้งแรกเท่านั้น
-    const checkSession = async () => {
+    {/*
+      const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         // ถ้ามี Session แล้ว ให้ไปหน้าหลัก และหยุดการทำงานทันที
@@ -40,6 +41,7 @@ export default function LoginPage() {
       }
     };
     checkSession();
+    */}
 
     // 2. ดึงข้อมูล Remember Password (ทำครั้งเดียว)
     const savedEmail = localStorage.getItem('paisan_remembered_email');
@@ -136,10 +138,13 @@ export default function LoginPage() {
 
       } else if (mode === 'forgot') {
         const { error: forgotError } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/update-password`,
+          redirectTo: `${window.location.origin}/reset-password`,
         });
         if (forgotError) throw forgotError;
-        setMessage('ระบบได้ส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ไปที่อีเมลของคุณแล้ว');
+        setMessage('ส่งรหัสยืนยันไปที่อีเมลแล้ว กำลังพาคุณไปหน้าตั้งรหัสผ่านใหม่...');
+
+        // เพิ่มบรรทัดนี้เพื่อพาไปหน้ากรอก OTP
+        setTimeout(() => navigate('/reset-password', { state: { email } }), 2000);
       }
 
     } catch (err: any) {

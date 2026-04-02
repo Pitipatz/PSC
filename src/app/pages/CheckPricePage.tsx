@@ -24,6 +24,7 @@ export default function CheckPricePage() {
   const [calculationInfo, setCalculationInfo] = useState<{ modelName: string; images: string[] }>({ modelName: '', images: [] });
   const [isLoading, setIsLoading] = useState(false);
   const [calculationTimestamp, setCalculationTimestamp] = useState<string>('');
+  const [calculationResult, setCalculationResult] = useState<any>(null);
 
   const INACTIVE_TIMEOUT = 60 * 60 * 1000;
 
@@ -111,38 +112,92 @@ export default function CheckPricePage() {
   const handleSubmit = async (data: TruckData) => {
     setIsLoading(true);
     resetTimer();
+
+    if (!data) {
+      // ถ้า data เป็น null (มาจากการกด "กรอกข้อมูลรถคันใหม่")
+      setCalculationResult(null); // ล้างค่าผลการคำนวณเดิมทิ้ง
+      setTruckData(null);
+      setIsLoading(false);
+      return; // จบการทำงาน ไม่ต้องไปทำส่วนคำนวณข้างล่าง
+    }
+
     try {
+      setIsLoading(true);
+      // 🚩 จุดสำคัญ: เช็คก่อนเลยว่าถ้า data เป็น null (มาจากการ Reset)
+      // ให้ล้างสถานะผลลัพธ์แล้ว "หยุดการทำงาน" ทันที ไม่ต้องไปบรรทัดถัดไป
+      if (!data || Object.keys(data).length === 0) {
+        setCalculationResult(null); // ล้างตารางผลลัพธ์บนหน้าจอ
+        return; // จบฟังก์ชันแค่นี้พอ
+      }
+      
+      // 1. ตรวจสอบ user
+      if (!user) {
+        alert("กรุณาเข้าสู่ระบบก่อนทำรายการ");
+        return;
+      }
+      
       const inputYear = parseInt(data.year);
       const buddhistYear = inputYear > 2500 ? inputYear : inputYear + 543;
       const christianYear = inputYear > 2500 ? inputYear - 543 : inputYear;
-
+      
+      // 2. คำนวณราคากลาง
       const res = await calculateCentralPrice(data.chassisNumber, buddhistYear);
 
-      if (res.found) {
-        // ✅ 1. บันทึกเวลาที่กดคำนวณ ณ วินาทีนี้
-        const now = new Date();
-        const timestampStr = `${now.toLocaleDateString('th-TH')} ${now.toLocaleTimeString('th-TH')}`;
-        setCalculationTimestamp(timestampStr);
+      const centralPrice = res.found ? (res.centralPrice || 0) : 0;
+      const modelName = res.found ? (res.modelName || 'N/A') : 'ไม่พบรุ่นในระบบ';
+      const trailerLoan = data.hasTrailer ? calculateTrailerAmount(centralPrice) : 0;
 
-        // เก็บ Format วันที่และเวลาไว้แสดงผล
-        setCalculationTimestamp(`${now.toLocaleDateString('th-TH')} ${now.toLocaleTimeString('th-TH')}`);
-        // ... ส่วน logic logPriceCheck และ setTruckData เดิม ...
-        const centralPrice = res.centralPrice || 0;
-        const trailerLoan = data.hasTrailer ? calculateTrailerAmount(centralPrice) : 0;
-        await logPriceCheck(user.email, user.name, data, centralPrice, res.modelName || 'N/A', trailerLoan);
+      // 3. บันทึก Log ลง Supabase (ต้องรอให้เสร็จเพื่อเอา logId)
+      const logId = await logPriceCheck(
+        user.email,
+        user.name,
+        data,
+        centralPrice,
+        modelName,
+        trailerLoan
+      );
 
-        setCalculationInfo({ modelName: res.modelName || '', images: res.images || [] });
-        setTruckData({ ...data, buddhistYear, christianYear, centralPrice });
-      } else {
-        alert(`ไม่พบข้อมูลราคากลางสำหรับเลขคัสซี: ${data.chassisNumber}`);
-        setTruckData(data);
+      // 4. จัดการเวลาแสดงผล
+      const now = new Date();
+      const timestampStr = `${now.toLocaleDateString('th-TH')} ${now.toLocaleTimeString('th-TH')}`;
+      setCalculationTimestamp(timestampStr);
+
+      // 5. เตรียมข้อมูลผลลัพธ์
+      const resultData = {
+        ...res,
+        logId: logId || null,
+        centralPrice,
+        trailerLoan,
+        timestamp: timestampStr
+      };
+
+      // 6. อัปเดต State เพื่อแสดงผลหน้าจอ
+      setCalculationResult(resultData);
+      setCalculationInfo({ 
+        modelName: modelName, 
+        images: res.images || [] 
+      });
+      
+      // อัปเดตข้อมูลรถ (ใช้ centralPrice ที่คำนวณได้จริง ไม่ใช่ 0)
+      setTruckData({ 
+        ...data, 
+        buddhistYear, 
+        christianYear, 
+        centralPrice: centralPrice 
+      });
+
+      // ถ้าไม่เจอ ให้แจ้งเตือนผู้ใช้ด้วย
+      if (!res.found) {
+        alert(`ไม่พบข้อมูลราคากลางสำหรับเลขคัสซี: ${data.chassisNumber}\n(ระบบบันทึกข้อมูลไว้แล้ว คุณยังสามารถส่ง LINE เพื่อปรึกษาได้)`);
       }
+
     } catch (error) {
+      console.error("Submit Error:", error);
       alert("เกิดข้อผิดพลาด โปรดลองอีกครั้ง");
     } finally {
       setIsLoading(false);
     }
-  };
+  }; // จบฟังก์ชัน handleSubmit อย่างถูกต้อง
 
   if (isInitializing) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -163,10 +218,14 @@ export default function CheckPricePage() {
           </div>
           <div className="flex items-center gap-4">
             <div className="bg-gray-50 border px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2">
-              <div className="w-6 h-6 bg-[#001489] rounded-full text-white flex items-center justify-center text-[10px]">
-                {user?.name?.charAt(0).toUpperCase() || 'U'}
+              <div className="w-8 h-8 bg-[#001489] text-white rounded-full flex items-center justify-center text-sm font-bold">
+                {user.name.charAt(0).toUpperCase()}
               </div>
-                {user?.name || 'Guest'}
+              <div className="flex items-center gap-2 text-sm">
+                <span className="font-bold text-gray-800">{user.name ? user.name.split(' ')[0] : 'Guest'}</span>
+                <span className="text-gray-300">|</span>
+                <span className="text-[#001489] font-semibold">{user.branch || 'รอยืนยันสาขา'}</span>
+              </div>
             </div>
             <button onClick={() => { logoutUser(); navigate('/'); }} className="text-red-600 p-2 border rounded-full hover:bg-red-50">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
@@ -177,7 +236,10 @@ export default function CheckPricePage() {
 
       <main className="max-w-7xl mx-auto px-8 py-12 grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-8">
-          <TruckPriceForm onSubmit={handleSubmit} calculationResult={truckData} />
+          <TruckPriceForm 
+            onSubmit={handleSubmit} 
+            calculationResult={calculationResult} // ✅ ส่งค่าที่มี logId กลับไปให้ Form
+          />
           
           {/* ส่วนแสดงรูปที่ User อัปโหลด */}
           {truckData?.images && truckData.images.length > 0 && (
@@ -199,6 +261,7 @@ export default function CheckPricePage() {
           )}
 
           <TruckImageGallery images={calculationInfo.images} modelName={calculationInfo.modelName} />
+          
         </div>
 
         <div className="sticky top-28">
@@ -208,15 +271,13 @@ export default function CheckPricePage() {
               <p className="text-[#001489] font-bold">กำลังคำนวณราคากลาง...</p>
             </div>
           ) : truckData ? (
-            <div className="space-y-4">
+            <div className="space-y-4">              
               <div className="flex justify-end">
                 <button onClick={exportToPDF} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg transition-all">
                    บันทึกเป็น PDF
                 </button>
               </div>
 
-              {/* 🎯 เริ่มโซนที่จะพิมพ์ */}
-              <div id="report-to-print" className="bg-white p-8 rounded-xl shadow-lg border">
                 <div className="text-center mb-6">
                   <h2 className="text-2xl font-bold text-[#CB333B]">ใบสรุปผลการประเมินราคารถ</h2>
                   <p className="text-gray-500 text-sm">พิมพ์เมื่อ: {new Date().toLocaleDateString('th-TH')}</p>
@@ -232,7 +293,6 @@ export default function CheckPricePage() {
                     ))}
                   </div>
                 </div>
-              </div>
             </div>
           ) : (
             <div className="bg-white rounded-2xl p-12 border-2 border-dashed flex flex-col items-center justify-center min-h-[400px] text-gray-400">

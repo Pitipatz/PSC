@@ -45,16 +45,25 @@ export async function loginUser(email: string, password: string): Promise<User |
     */
 
     // 3. ดึงข้อมูล Profile พื้นฐาน
-    const { data: profileData } = await supabase
+    const { data: profileData, error: profileError } = await supabase
       .from('profiles')
-      .select('first_name, last_name')
+      .select('first_name, last_name, branch_id, branches (name_th)')
       .eq('id', authData.user.id)
       .single();
+
+      // --- เพิ่มบรรทัดนี้เพื่อเช็คใน Console ตอนกด Login ---
+      console.log("Raw Profile Data from Supabase:", profileData);
+      // ----------------------------------------------
+
+    if (profileError) {
+      console.error("Error fetching profile:", profileError);
+    }
 
     const currentUser: User = {
       id: authData.user.id,
       email: authData.user.email || '',
       name: profileData ? `${profileData.first_name} ${profileData.last_name}` : 'User',
+      branch: (profileData as any)?.branches?.name_th || 'รอยืนยันสาขา',
       permissions:[],
       // permission: permsData.map((p: any) => p.perm_name), // แปลงเป็น Array ของ string
       loginTime: new Date().toISOString(),
