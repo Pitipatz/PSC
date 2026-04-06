@@ -1,300 +1,409 @@
-import { useState, useEffect } from 'react';
-import { supabase, getCurrentUser } from '../utils/auth';
-import { NavigationMenu } from '../components/NavigationMenu';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
-import { Input } from '../components/ui/input';
+import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { User as UserIcon, Briefcase, Pencil, Camera, Image as ImageIcon, Mail, Phone, Building2, Calendar } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Loader2, User, Mail, Save, CheckCircle2, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { Card } from '../components/ui/card';
+import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
+import { toast } from 'sonner';
+import { Toaster } from '../components/ui/sonner';
+import { Header } from '../components/Header';
+import { getCurrentUser, supabase } from '../utils/auth';
+
+interface UserData {
+  id: string;
+  employee_id: string;
+  first_name: string;
+  last_name: string;
+  nickname: string;
+  email: string;
+  phone: string;
+  internal_phone: string;
+  avatar_url: string;
+  branch_id: number;
+  branches?: {
+    name_th: string;
+  };
+  dept_id: string;
+  departments?: {
+    name_th: string;
+  };
+  job_level: string;
+  joined_date: string;
+}
 
 export default function ProfilePage() {
-  const [loading, setLoading] = useState(true);
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [changingPassword, setChangingPassword] = useState(false);
-  const [message, setMessage] = useState({ type: '', text: '' });
-  const [passMessage, setPassMessage] = useState({ type: '', text: '' });
+  const navigate = useNavigate();
+  const [user, setUser] = useState<UserData | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedUser, setEditedUser] = useState<UserData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // State สำหรับข้อมูล Profile
-  const [profile, setProfile] = useState({
-    first_name: '',
-    last_name: '',
-    email: '',
-    employee_id:'',
-  });
 
-  // State สำหรับเปลี่ยนรหัสผ่าน
-  const [passwords, setPasswords] = useState({
-    currentPassword: '', // เพิ่มช่องนี้
-    newPassword: '',
-    confirmPassword: ''
-  });
-  const [showPass, setShowPass] = useState(false);
-
+  // 1. ดึงข้อมูล User จาก Supabase เมื่อโหลดหน้า
   useEffect(() => {
-    fetchProfile();
-  }, []);
+    const fetchUserProfile = async () => {
+      try {
+        const authUser = getCurrentUser();
+        if (!authUser) {
+          navigate('/');
+          return;
+        }
 
-  const fetchProfile = async () => {
-    try {
-      const user = await getCurrentUser();
-      if (!user) return;
+        // ดึงข้อมูลจากตาราง profiles พร้อมชื่อสาขา
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*, branches(name_th), departments(name_th)')
+          .eq('id', authUser.id)
+          .single();
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('first_name, last_name, email, employee_id')
-        .eq('id', user.id)
-        .single();
-
-      if (error) throw error;
-      if (data) {
-        setProfile({
-          first_name: data.first_name || '',
-          last_name: data.last_name || '',
-          email: data.email || '',
-          employee_id: data.employee_id||'',
-        });
+        if (error) throw error;
+        
+        setUser(data);
+        setEditedUser(data);
+      } catch (error) {
+        console.error('Error fetching user:', error);
+        toast.error('ไม่สามารถดึงข้อมูลผู้ใช้งานได้');
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err: any) {
-      setMessage({ type: 'error', text: 'ดึงข้อมูลล้มเหลว: ' + err.message });
-    } finally {
-      setLoading(false);
-    }
+    };
+
+    fetchUserProfile();
+  }, [navigate]);
+
+  const handleEdit = () => {
+    setIsEditing(true);
   };
 
-  // ฟังก์ชันอัปเดตชื่อ-นามสกุล
-  const handleUpdateProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingProfile(true);
-    setMessage({ type: '', text: '' });
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditedUser(user);
+  };
+
+  const getInitials = `${user?.first_name?.[0] || ''}${user?.last_name?.[0] || ''}`.toUpperCase();
+
+  // 2. บันทึกข้อมูลลง Database จริง
+  const handleSave = async () => {
+    if (!editedUser) return;
 
     try {
-      const user = getCurrentUser();
       const { error } = await supabase
         .from('profiles')
         .update({
-          first_name: profile.first_name,
-          last_name: profile.last_name,
-          employee_id: profile.employee_id // เปิดให้แก้ถ้าต้องการ
+          nickname: editedUser.nickname,
+          phone: editedUser.phone,
+          internal_phone: editedUser.internal_phone,
+          avatar_url: editedUser.avatar_url,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', user?.id);
+        .eq('id', editedUser.id);
 
       if (error) throw error;
-      
-      setMessage({ type: 'success', text: 'อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว' });
-      
-      // อัปเดตข้อมูลใน Session
-      if (user) {
-        user.name = `${profile.first_name} ${profile.last_name}`;
-        sessionStorage.setItem('paisan_current_user', JSON.stringify(user));
-      }
-    } catch (err: any) {
-      setMessage({ type: 'error', text: err.message });
-    } finally {
-      setSavingProfile(false);
+
+      setUser(editedUser); // อัปเดต state หลักหลังจากบันทึกสำเร็จ
+      setIsEditing(false);
+      toast.success('บันทึกข้อมูลสำเร็จ');
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      toast.error('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
     }
   };
 
-  // ฟังก์ชันเปลี่ยนรหัสผ่าน
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPassMessage({ type: '', text: '' });
+  const handleInputChange = (field: keyof UserData, value: string) => {
+    setEditedUser((prev) => prev ? ({ ...prev, [field]: value }) : null);
+  };
 
-    // Validation เบื้องต้น
-    if (passwords.newPassword.length < 8) {
-      setPassMessage({ type: 'error', text: 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 8 ตัวอักษร' });
-      return;
+  const handleAvatarClick = () => {
+    if (isEditing && fileInputRef.current) {
+      fileInputRef.current.click();
     }
-    if (passwords.newPassword !== passwords.confirmPassword) {
-      setPassMessage({ type: 'error', text: 'รหัสผ่านใหม่ไม่ตรงกัน' });
-      return;
+  };
+
+  // 3. ฟังก์ชันจำลองการอัปโหลด (แนะนำให้ใช้ Supabase Storage ในอนาคต)
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        handleInputChange('avatar_url', reader.result as string);
+      };
+      reader.readAsDataURL(file);
     }
+  };
 
-    setChangingPassword(true);
-    try {
-        const user = getCurrentUser();
-        if (!user?.email) throw new Error("ไม่พบข้อมูลอีเมลผู้ใช้");
-
-        // 2. ตรวจสอบรหัสผ่านเดิม (Re-authenticate)
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: user.email,
-        password: passwords.currentPassword,
-        });
-
-        if (signInError) {
-        throw new Error("รหัสผ่านเดิมไม่ถูกต้อง");
-        }
-
-        // 3. ถ้าผ่าน ให้ทำการเปลี่ยนรหัสผ่านใหม่
-        const { error: updateError } = await supabase.auth.updateUser({
-        password: passwords.newPassword
-        });
-
-        if (updateError) throw updateError;
-
-        setPassMessage({ type: 'success', text: 'เปลี่ยนรหัสผ่านสำเร็จแล้ว' });
-        setPasswords({ currentPassword: '', newPassword: '', confirmPassword: '' }); // ล้างค่าทั้งหมด
-        } catch (err: any) {
-            setPassMessage({ type: 'error', text: err.message });
-        } finally {
-            setChangingPassword(false);
-        }
-    };
-
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[#001489]" />
-      </div>
-    );
-  }
+  if (isLoading || !user) return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="animate-spin rounded-full h-10 w-10 border-4 border-[#001489] border-t-transparent"></div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <NavigationMenu />
-      
-      <main className="max-w-2xl mx-auto py-10 px-4 space-y-8">
-        
-        {/* Card 1: ข้อมูลส่วนตัว */}
-        <Card className="shadow-lg border-t-4 border-t-[#001489]">
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center gap-2">
-              <User className="h-5 w-5 text-[#001489]" />
-              ข้อมูลส่วนตัว
-            </CardTitle>
-            <CardDescription>แก้ไขชื่อและนามสกุลที่ใช้ในระบบ</CardDescription>
-          </CardHeader>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
+      <Header 
+      user={{
+        name: `${user.first_name} ${user.last_name}`,
+        // เปลี่ยนจาก branch_name เป็น name_th
+        branch: user.branches?.name_th, 
+        avatar_url: user.avatar_url
+      }}
+      title='แก้ไขข้อมูลส่วนตัว'
+      subtitle='Employee Profile' />
+      <Toaster position="top-right" />
+      <div className="max-w-4xl mx-auto py-10 px-4">
+        <Card className="p-6">
+          {/* Avatar Section */}
+          <div className="flex items-center bg-[#001489] text-white justify-between rounded-md py-4 px-6 gap-6 mb-8 pb-6 border-b">
+            <div className="relative">
+              <Avatar 
+                className="size-24 cursor-pointer hover:opacity-80 transition-opacity"
+                onClick={handleAvatarClick}
+              >
+                <AvatarImage src={isEditing ? editedUser?.avatar_url : user.avatar_url} />
+                <AvatarFallback className="text-2xl bg-gray-100 text-[#001489] font-bold">
+                  {getInitials || 'G'}
+                </AvatarFallback>
+              </Avatar>
+              {isEditing && (
+                <div 
+                  className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full cursor-pointer opacity-0 hover:opacity-100 transition-opacity"
+                  onClick={handleAvatarClick}
+                >
+                  <Camera className="size-8 text-white" />
+                </div>
+              )}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="image/*"
+                className="hidden"
+              />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-2xl font-semibold">
+                {user.first_name} {user.last_name}
+              </h2>
+              <p className="text-gray-600">{user.job_level}</p>
+              <p className="text-sm text-gray-500 mt-1">รหัสพนักงาน: {user.employee_id}</p>
+            </div>
+            {!isEditing && (
+              <Button onClick={handleEdit}><Pencil className="size-5" />แก้ไขข้อมูล</Button>
+            )}
+          </div>
 
-          <CardContent>
-            <form onSubmit={handleUpdateProfile} className="space-y-4">
+          {/* Form Section */}
+          <div className="space-y-6">
+            {/* Personal Information */}
+            <div>
+              <h3 className="text-lg bg-[#001489] text-white py-2 px-4 rounded-md flex items-center gap-ont-semibold mb-4 flex items-center gap-2">
+                <UserIcon className="size-5" />
+                ข้อมูลส่วนตัว
+              </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName">ชื่อจริง</Label>
-                  <div className="relative">
-                    <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                    <Input 
-                      id="firstName"
-                      className="pl-10"
-                      value={profile.first_name}
-                      onChange={(e) => setProfile({...profile, first_name: e.target.value})}
-                      required
-                    />
-                  </div>
+                {/* First Name - Read Only */}
+                <div>
+                  <Label htmlFor="first_name">ชื่อ</Label>
+                  <Input
+                    id="first_name"
+                    value={user.first_name}
+                    disabled
+                    className="bg-gray-50"
+                  />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="lastName">นามสกุล</Label>
-                  <Input 
-                    id="lastName"
-                    value={profile.last_name}
-                    onChange={(e) => setProfile({...profile, last_name: e.target.value})}
-                    required
+                {/* Last Name - Read Only */}
+                <div>
+                  <Label htmlFor="last_name">นามสกุล</Label>
+                  <Input
+                    id="last_name"
+                    value={user.last_name}
+                    disabled
+                    className="bg-gray-50"
+                  />
+                </div>
+
+                {/* Nickname - Editable */}
+                <div>
+                  <Label htmlFor="nickname">ชื่อเล่น</Label>
+                  <Input
+                    id="nickname"
+                    value={isEditing ? editedUser?.nickname : user.nickname}
+                    onChange={(e) => handleInputChange('nickname', e.target.value)}
+                    disabled={!isEditing}
+                    placeholder="กรอกชื่อเล่น"
+                  />
+                </div>
+
+                {/* Employee ID - Read Only */}
+                <div>
+                  <Label htmlFor="employee_id">รหัสพนักงาน</Label>
+                  <Input
+                    id="employee_id"
+                    value={user.employee_id}
+                    disabled
+                    className="bg-gray-50"
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="space-y-2 text-gray-400">
-                <Label htmlFor="email">อีเมล (ไม่สามารถเปลี่ยนได้)</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-300" />
-                  <Input id="email" className="pl-10 bg-gray-50 cursor-not-allowed" value={profile.email} disabled />
+            {/* Contact Information */}
+            <div>
+              <h3 className="text-lg bg-[#001489] text-white py-2 px-4 rounded-md flex items-center gap-ont-semibold mb-4 flex items-center gap-2">
+                <Phone className="size-5" />
+                ข้อมูลติดต่อ
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Email - Read Only */}
+                <div>
+                  <Label htmlFor="email" className="flex items-center gap-2">
+                    <Mail className="size-4" />
+                    อีเมล
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={user.email}
+                    disabled
+                    className="bg-gray-50"
+                  />
+                </div>
+
+                {/* Phone - Editable */}
+                <div>
+                  <Label htmlFor="phone">เบอร์โทรศัพท์</Label>
+                  <Input
+                    id="phone"
+                    value={isEditing ? editedUser?.phone : user.phone}
+                    onChange={(e) => handleInputChange('phone', e.target.value)}
+                    disabled={!isEditing}
+                    placeholder="0812345678"
+                  />
+                </div>
+
+                {/* Internal Phone - Editable */}
+                <div>
+                  <Label htmlFor="internal_phone">เบอร์ภายใน</Label>
+                  <Input
+                    id="internal_phone"
+                    value={isEditing ? editedUser?.internal_phone : user.internal_phone}
+                    onChange={(e) => handleInputChange('internal_phone', e.target.value)}
+                    disabled={!isEditing}
+                    placeholder="1234"
+                  />
                 </div>
               </div>
+            </div>
 
-              {message.text && (
-                <div className={`p-4 rounded-lg flex items-center gap-2 ${
-                  message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                }`}>
-                  {message.type === 'success' && <CheckCircle2 className="h-4 w-4" />}
-                  <span className="text-sm font-medium">{message.text}</span>
+            {/* Organization Information */}
+            <div>
+              <h3 className="text-lg bg-[#001489] text-white py-2 px-4 rounded-md flex items-center gap-ont-semibold mb-4 flex items-center gap-2">
+                <Building2 className="size-5" />
+                ข้อมูลองค์กร
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Branch - Read Only */}
+                <div>
+                  <Label htmlFor="branch_id">สาขา</Label>
+                  <Input
+                    id="branch_id"
+                    value={`สาขา ${user.branches?.name_th}`}
+                    disabled
+                    className="bg-gray-50"
+                  />
                 </div>
-              )}
 
-              <Button 
-                type="submit" 
-                className="w-full bg-[#001489] hover:bg-[#000d5c] h-12"
-                disabled={savingProfile}
-              >
-                {savingProfile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {/* Department - Read Only */}
+                <div>
+                  <Label htmlFor="dept_id">แผนก</Label>
+                  <Input
+                    id="dept_id"
+                    value={user.departments?.name_th}
+                    disabled
+                    className="bg-gray-50"
+                  />
+                </div>
+
+                {/* Job Level - Read Only */}
+                <div>
+                  <Label htmlFor="job_level" className="flex items-center gap-2">
+                    <Briefcase className="size-4" />
+                    ตำแหน่ง
+                  </Label>
+                  <Input
+                    id="job_level"
+                    value={user.job_level}
+                    disabled
+                    className="bg-gray-50"
+                  />
+                </div>
+
+                {/* Joined Date - Read Only */}
+                <div>
+                  <Label htmlFor="joined_date" className="flex items-center gap-2">
+                    <Calendar className="size-4" />
+                    วันที่เริ่มงาน
+                  </Label>
+                  <Input
+                    id="joined_date"
+                    value={new Date(user.joined_date).toLocaleDateString('th-TH', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                    })}
+                    disabled
+                    className="bg-gray-50"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Avatar URL - Editable */}
+            <div>
+              <h3 className="text-lg bg-[#001489] text-white py-2 px-4 rounded-md flex items-center gap-ont-semibold mb-4 flex items-center gap-2">
+                <ImageIcon className="size-5" />
+                รูปโปรไฟล์
+              </h3>
+              <div>
+                <Label htmlFor="avatar_url">URL รูปภาพ</Label>
+                <Input
+                  id="avatar_url"
+                  value={isEditing ? editedUser?.avatar_url : user.avatar_url}
+                  onChange={(e) => handleInputChange('avatar_url', e.target.value)}
+                  disabled={!isEditing}
+                  placeholder="https://example.com/avatar.jpg"
+                />
+                <p className="text-sm text-gray-500 mt-1">
+                  ใส่ URL ของรูปโปรไฟล์ที่ต้องการใช้ หรือคลิกที่รูปโปรไฟล์ด้านบนเพื่ออัพโหลดไฟล์
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          {isEditing && (
+            <div className="flex gap-3 mt-8 pt-6 border-t justify-end">
+              <Button variant="outline" onClick={handleCancel}>
+                ยกเลิก
+              </Button>
+              <Button onClick={handleSave}>
                 บันทึกการเปลี่ยนแปลง
               </Button>
-            </form>
-          </CardContent>
+            </div>
+          )}
         </Card>
 
-        {/* Card 2: เปลี่ยนรหัสผ่าน */}
-        <Card className="shadow-lg border-t-4 border-t-[#CB333B]">
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center gap-2">
-              <Lock className="h-5 w-5 text-[#CB333B]" />
-              เปลี่ยนรหัสผ่าน
-            </CardTitle>
-            <CardDescription>รหัสผ่านควรมีความยาวอย่างน้อย 6 ตัวอักษร</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleChangePassword} className="space-y-4">
-                {/* ช่องรหัสผ่านเดิม */}
-                <div className="space-y-2">
-                    <Label>รหัสผ่านเดิม</Label>
-                    <div className="relative">
-                    <Input 
-                        type={showPass ? "text" : "password"}
-                        placeholder="กรอกรหัสผ่านปัจจุบัน"
-                        value={passwords.currentPassword}
-                        onChange={(e) => setPasswords({...passwords, currentPassword: e.target.value})}
-                        required
-                    />
-                    </div>
-                </div>
-
-                <hr className="my-4 border-gray-100" />
-                {/* ช่องรหัสผ่านใหม่ */}
-                <div className="space-y-2">
-                    <Label>รหัสผ่านใหม่</Label>
-                    <div className="relative">
-                    <Input 
-                        type={showPass ? "text" : "password"}
-                        placeholder="อย่างน้อย 6 ตัวอักษร"
-                        value={passwords.newPassword}
-                        onChange={(e) => setPasswords({...passwords, newPassword: e.target.value})}
-                        required
-                    />
-                    <button 
-                        type="button"
-                        onClick={() => setShowPass(!showPass)}
-                        className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
-                    >
-                        {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                    </div>
-                </div>
-
-                <div className="space-y-2">
-                    <Label>ยืนยันรหัสผ่านใหม่</Label>
-                    <Input 
-                    type={showPass ? "text" : "password"}
-                    value={passwords.confirmPassword}
-                    onChange={(e) => setPasswords({...passwords, confirmPassword: e.target.value})}
-                    required
-                    />
-                </div>
-
-              {passMessage.text && (
-                <div className={`p-3 rounded flex items-center gap-2 text-sm ${
-                  passMessage.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                }`}>
-                  {passMessage.type === 'success' ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-                  {passMessage.text}
-                </div>
-              )}
-
-              <Button type="submit" variant="destructive" className="w-full bg-[#CB333B]" disabled={changingPassword}>
-                {changingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
-                ยืนยันการเปลี่ยนรหัสผ่าน
-              </Button>
-            </form>
-          </CardContent>
+        {/* Info Note */}
+        <Card className="mt-4 p-4 bg-blue-50 border-blue-200">
+          <p className="text-sm text-blue-800">
+            <strong>หมายเหตุ:</strong> ข้อมูลบางส่วน เช่น ชื่อ-นามสกุล อีเมล และข้อมูลองค์กร 
+            จะต้องติดต่อฝ่าย HR เพื่อทำการเปลี่ยนแปลง
+          </p>
         </Card>
-      </main>
+      </div>
     </div>
   );
 }

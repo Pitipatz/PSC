@@ -4,12 +4,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTr
 import { Button } from './ui/button';
 import { Menu, History, LogOut, User, Search } from 'lucide-react';
 import { getCurrentUser, logoutUser } from '../utils/auth';
+import { usePermissions } from '../hooks/usePermissions';
 
 export function NavigationMenu() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const user = getCurrentUser();
+
+  const { hasPermission, loading } = usePermissions();
 
   const handleLogout = () => {
     logoutUser();
@@ -25,26 +28,34 @@ export function NavigationMenu() {
   const menuItems = [
     {
       icon: Search,
-      label: 'ตรวจสอบราคา',
+      label: 'ระบบตรวจสอบราคากลาง',
       path: '/pricecheck',
       description: 'ตรวจสอบราคากลางรถบรรทุก',
-      permission: 'report.view' // ทุกคนที่มีสิทธิ์ดูรายงานเข้าได้
+      permission: 'price.check' // ใช้ชื่อให้ตรงกับในตาราง permissions ของคุณ
     },
     {
       icon: History,
-      label: 'ประวัติการค้นหา',
+      label: 'ประวัติการตรวจสอบราคากลาง',
       path: '/history',
       description: 'ดูประวัติการตรวจสอบราคา',
       permission: 'report.view'
     },
     {
-      icon: User, // ตัวอย่างเมนูใหม่
+      icon: User,
       label: 'จัดการพนักงาน',
       path: '/admin/users',
       description: 'จัดการสิทธิ์และข้อมูลพนักงาน',
-      permission: 'user.manage' // เฉพาะ Admin เท่านั้น
+      permission: 'user.manage'
     }
   ];
+
+  // 2. กรองเมนูที่ User ไม่มีสิทธิ์ออกไปก่อน
+  const visibleMenuItems = menuItems.filter(item => {
+    // ถ้าเมนูไหนไม่ได้ระบุ permission ไว้ ให้แสดงได้เลย
+    if (!item.permission) return true;
+    // ถ้ามีระบุไว้ ให้ไปเช็กผ่านฟังก์ชัน hasPermission
+    return hasPermission(item.permission);
+  });
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -70,56 +81,55 @@ export function NavigationMenu() {
         </SheetHeader>
 
         {/* User Info */}
-        <div className="bg-white/10 rounded-lg p-4 mb-6 border border-white/20">
+        <button 
+          onClick={() => handleNavigate('/profile')} // หรือ path หน้า profile ของคุณ
+          className="w-full bg-white/10 rounded-lg p-4 mb-6 border border-white/20 flex items-center justify-between group hover:bg-white/20 transition-all text-left"
+        >
           <div className="flex items-center gap-3">
             <div className="bg-white/20 p-2 rounded-full">
               <User className="h-5 w-5" />
             </div>
             <div>
-              <p className="font-semibold text-sm">{user?.name || 'ผู้ใช้งาน'}</p>
-              <p className="text-xs text-white/70">{user?.email || ''}</p>
+              <p className="font-semibold text-sm">{user?.name || 'ผู้ใช้งาน'}</p>                <p className="text-xs text-white/70">{user?.email || ''}</p>
             </div>
           </div>
-        </div>
+          {/* เพิ่มไอคอนลูกศรเล็กๆ เพื่อบอกว่ากดเข้าไปได้ */}
+          <div className="text-white/40 group-hover:text-white transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m9 18 6-6-6-6"/>
+            </svg>
+          </div>
+        </button>
 
         {/* Navigation Items */}
         <nav className="space-y-2">
-          {menuItems.map((item) => {
-            // 🛡️ เพิ่มบรรทัดป้องกันตรงนี้ครับ
-            // ถ้าไม่มี User หรือ User ไม่มี Permissions ให้ข้าม Item นี้ไปเลย (หรือ return null)
-            if (!user || !user.permissions) {
-              return null;
-            }
-            
-            // 1. เช็กสิทธิ์: ถ้าเมนูไม่มีเงื่อนไข (null) หรือ user มีสิทธิ์ตรงกับที่ต้องการ
-            // (สมมติว่า user object ของคุณมี array ชื่อ permissions เก็บอยู่)
-            // แก้ไขในส่วน filter/map เมนู
-            const hasPermission = !item.permission || (Array.isArray(user?.permissions) && user.permissions.includes(item.permission));
-            
-            // 2. ถ้าไม่มีสิทธิ์ ให้ข้ามการวาดเมนูนี้ไปเลย
-            if (!hasPermission) return null;
-            
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            
-            return (
-              <button
-                key={item.path}
-                onClick={() => handleNavigate(item.path)}
-                className={`w-full flex items-start gap-4 p-4 rounded-lg transition-all ${
-                  isActive
-                    ? 'bg-[#CB333B] shadow-lg'
-                    : 'hover:bg-white/10'
-                }`}
-              >
-                <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" />
-                <div className="text-left">
-                  <p className="font-semibold">{item.label}</p>
-                  <p className="text-xs text-white/70 mt-1">{item.description}</p>
-                </div>
-              </button>
-            );
-          })}
+          {/* 🟢 นำ loading มาใช้งานตรงนี้ */}
+          {loading ? (
+            <div className="p-4 text-sm text-white/50">กำลังตรวจสอบสิทธิ์...</div>
+          ) : (
+            visibleMenuItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path;
+
+              return (
+                <button
+                  key={item.path}
+                  onClick={() => handleNavigate(item.path)}
+                  className={`w-full flex items-start gap-4 p-4 rounded-lg transition-all ${
+                    isActive
+                      ? 'bg-[#CB333B] shadow-lg'
+                      : 'hover:bg-white/10'
+                  }`}
+                >
+                  <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" />
+                  <div className="text-left">
+                    <p className="font-semibold">{item.label}</p>
+                    <p className="text-xs text-white/70 mt-1">{item.description}</p>
+                  </div>
+                </button>
+              );
+            })
+          )}
         </nav>
 
         {/* Logout Button */}

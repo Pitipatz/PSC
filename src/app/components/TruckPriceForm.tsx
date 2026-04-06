@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { TruckSpinner } from './ui/truck-spinner';
 import NumericInput from './ui/NumericInput';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -412,9 +413,8 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
             className="w-full bg-[#CB333B] hover:bg-[#a82930] text-white py-6 text-lg rounded-xl shadow-lg transition-all mt-4"
           >
             {isLoading ? (
-              <div className="flex items-center gap-2">
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                กำลังคำนวณ...
+              <div className="size-sm flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
+                <TruckSpinner size="sm" text="กำลังโหลด..." />
               </div>
             ) : (
               "คำนวณราคากลาง"

@@ -3,14 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { TruckPriceForm } from '../components/TruckPriceForm';
 import { PriceResultTable } from '../components/PriceResultTable';
 import { TruckImageGallery } from '../components/TruckImageGallery';
-import { NavigationMenu } from '../components/NavigationMenu';
-import { getCurrentUser, logoutUser } from '../utils/auth';
+import { logoutUser, supabase } from '../utils/auth';
 import { logPriceCheck } from '../utils/logger';
 import { calculateCentralPrice, calculateTrailerAmount } from '../utils/priceCalculator';
-import { supabase } from '../utils/auth';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { TruckData } from '../utils/types';
+import { TruckSpinner } from '../components/ui/truck-spinner';
+import { Header } from '../components/Header';
 
 // ✅ ประกาศ Interface ให้ชัดเจนที่นี่ที่เดียว
 
@@ -84,16 +84,34 @@ export default function CheckPricePage() {
 
   // --- Effects ---
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const cachedUser = getCurrentUser();
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          navigate('/', { replace: true });
-          return;
-        }
-        setUser(cachedUser || session.user);
+  const initAuth = async () => {
+    try {
+      // 1. เช็ค Session ก่อน
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate('/', { replace: true });
+        return;
+      }
+
+      // 2. ดึงข้อมูลโปรไฟล์แบบละเอียด (เหมือนหน้า Profile)
+      const { data: profileData, error } = await supabase
+        .from('profiles')
+        .select('*, branches(name_th)')
+        .eq('id', session.user.id)
+        .single();
+
+      if (error) throw error;
+        // 3. เซ็ต State user ด้วยข้อมูลที่มีทั้งชื่อ, สาขา และ avatar_url
+        setUser({
+          id: profileData.id,
+          email: profileData.email,
+          name: `${profileData.first_name} ${profileData.last_name}`,
+          branch: profileData.branches?.name_th,
+          avatar_url: profileData.avatar_url
+        });
+
       } catch (err) {
+        console.error("Auth error:", err);
         navigate('/', { replace: true });
       } finally {
         setIsInitializing(false);
@@ -207,32 +225,7 @@ export default function CheckPricePage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-      <header className="bg-white shadow-md border-b-4 border-[#CB333B] sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto py-4 px-8 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="bg-[#001489] rounded-lg p-1"><NavigationMenu /></div>
-            <img src="/Paisan_Logo.png" alt="Logo" className="h-12 hidden sm:block" />
-            <div className="hidden md:block border-l pl-6">
-              <h1 className="text-xl font-bold text-[#001489]">ระบบตรวจสอบราคากลาง</h1>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="bg-gray-50 border px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2">
-              <div className="w-8 h-8 bg-[#001489] text-white rounded-full flex items-center justify-center text-sm font-bold">
-                {user.name.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="font-bold text-gray-800">{user.name ? user.name.split(' ')[0] : 'Guest'}</span>
-                <span className="text-gray-300">|</span>
-                <span className="text-[#001489] font-semibold">{user.branch || 'รอยืนยันสาขา'}</span>
-              </div>
-            </div>
-            <button onClick={() => { logoutUser(); navigate('/'); }} className="text-red-600 p-2 border rounded-full hover:bg-red-50">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-            </button>
-          </div>
-        </div>
-      </header>
+      <Header user={user} title='ระบบตรวจสอบราคากลาง' subtitle='Truck Appraisal' />
 
       <main className="max-w-7xl mx-auto px-8 py-12 grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-8">
@@ -259,16 +252,20 @@ export default function CheckPricePage() {
               </div>
             </div>
           )}
-
-          <TruckImageGallery images={calculationInfo.images} modelName={calculationInfo.modelName} />
+          
+          {/* ✅ ย้ายมานี่: แสดง Gallery รูปจากฐานข้อมูล "หลังกดคำนวณแล้วเท่านั้น" */}
+          {truckData && (
+            <TruckImageGallery images={calculationInfo.images} modelName={calculationInfo.modelName} />
+          )}
           
         </div>
 
         <div className="sticky top-28">
           {isLoading ? (
             <div className="bg-white rounded-2xl shadow-xl p-12 flex flex-col items-center justify-center min-h-[400px]">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-[#001489] mb-4"></div>
-              <p className="text-[#001489] font-bold">กำลังคำนวณราคากลาง...</p>
+              <div className="size-sm flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
+                <TruckSpinner size="sm" text="กำลังคำนวณ..." />
+              </div>
             </div>
           ) : truckData ? (
             <div className="space-y-4">              

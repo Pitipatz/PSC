@@ -22,8 +22,8 @@ export default function UserManagementPage() {
       .from('profiles')
       .select(`
         id, employee_id, first_name, last_name, email,
-        branches (branch_name),
-        departments (dept_name),
+        branches (name_th as branch_name),
+        departments (name_th as dept_name),
         user_roles (roles (role_name))
       `);
 
