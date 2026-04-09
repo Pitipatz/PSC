@@ -4,13 +4,17 @@ import { TruckPriceForm } from '../components/TruckPriceForm';
 import { PriceResultTable } from '../components/PriceResultTable';
 import { TruckImageGallery } from '../components/TruckImageGallery';
 import { logoutUser, supabase } from '../utils/auth';
-import { logPriceCheck } from '../utils/logger';
+import { logPriceCheck, fetchVehicleTypes, fetchBrandNames } from '../utils/logger';
 import { calculateCentralPrice, calculateTrailerAmount } from '../utils/priceCalculator';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { TruckData } from '../utils/types';
 import { TruckSpinner } from '../components/ui/truck-spinner';
 import { Header } from '../components/Header';
+import CameraScanner from '../components/CameraScanner'; // path ตามที่คุณวางไฟล์ไว้
+import { Camera, X, RefreshCw } from 'lucide-react';
+import { base64ToFile } from '../utils/base64ToFile';
+import { recognizeText, parseRegistrationData } from '../utils/ocrHelper';
 
 // ✅ ประกาศ Interface ให้ชัดเจนที่นี่ที่เดียว
 
@@ -25,18 +29,120 @@ export default function CheckPricePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [calculationTimestamp, setCalculationTimestamp] = useState<string>('');
   const [calculationResult, setCalculationResult] = useState<any>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [ocrResult, setOcrResult] = useState<any>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [dbVehicleTypes, setDbVehicleTypes] = useState<string[]>([]);
+  const [dbVehicleBrands, setDbVehicleBrands] = useState<string[]>([]);
+  const [ocrProgress, setOcrProgress] = useState<number>(0);
+  const allImages = [
+    ...(imageUrl ? [imageUrl] : []), // ถ้ามีหน้าเล่ม ให้เอาไว้รูปแรก
+    ...(truckData?.images || [])     // ตามด้วยรูปรถอื่นๆ
+  ];
+  // ปรับจำนวนตัวเลขบอกลำดับภาพ (Total)
+  const totalImages = allImages.length;
+
+  const uploadRegistrationImage = async (base64String: string) => {
+    try {
+      // 1. ตั้งชื่อไฟล์ให้ไม่ซ้ำกัน (Timestamp + Random String)
+      const fileName = `reg-${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
+      const filePath = `${fileName}`; // เก็บไว้ที่ root ของ bucket หรือสร้าง folder เช่น 'uploads/${fileName}'
+
+      // 2. แปลง Base64 เป็น File Object โดยใช้ Helper ที่เราเขียนไว้
+      const file = base64ToFile(base64String, fileName);
+
+      // 3. สั่ง Upload ไปยัง Bucket ชื่อ 'car-registration-books'
+      const { data, error } = await supabase.storage
+        .from('car-registration-books')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      // 4. สร้าง Public URL เพื่อนำไปใช้แสดงผลหรือส่งให้ OCR API
+      // หมายเหตุ: หากตั้ง Bucket เป็น Private ต้องใช้ createSignedUrl แทน
+      const { data: { publicUrl } } = supabase.storage
+        .from('car-registration-books')
+        .getPublicUrl(filePath);
+
+      return {
+        path: data.path,
+        fullUrl: publicUrl
+      };
+
+    } catch (error) {
+      console.error('Error in uploadRegistrationImage:', error);
+      throw error;
+    }
+  };
+
+  // ฟังก์ชันรับรูปจาก CameraScanner
+  const handleCapture = async (base64Img: string) => {
+    console.log("🚀 เริ่มกระบวนการ OCR...");
+    setCapturedImage(base64Img); // แสดงรูป Preview ทันที
+    setIsCameraOpen(false);      // ปิดกล้อง
+    setIsUploading(true);        // เริ่มสถานะ Loading
+    setOcrProgress(0);
+
+    try {
+      // เรียกฟังก์ชัน Upload
+      const result = await uploadRegistrationImage(base64Img);
+      
+      setImageUrl(result.fullUrl);
+      console.log("Upload Success! URL:", result.fullUrl);
+
+      // 2. (จำลอง) ขั้นตอน OCR - ในอนาคตจะเรียก API ตรงนี้
+      // const ocrData = await startOCR(result.fullUrl);
+      // 1. สั่ง OCR อ่านข้อความ
+      const rawText = await recognizeText(base64Img, (p) => {
+        setOcrProgress(Math.round(p * 100)); // เก็บเป็น %
+      });
+      console.log("ข้อความที่อ่านได้:", rawText);
+
+      if (!rawText || rawText.trim() === "") {
+        alert("OCR อ่านข้อความไม่ได้เลยครับ ลองถ่ายใหม่ให้ชัดขึ้นนะพี่");
+        return;
+      }
+
+      // 2. แกะข้อมูลเป็น JSON
+      const extractedData = parseRegistrationData(rawText, dbVehicleTypes, dbVehicleBrands);
+      console.log("🎯 ข้อมูลที่แกะได้:", extractedData);
+      
+      // 3. ส่งข้อมูลเข้าฟอร์ม (State ที่พี่ส่งไปให้ TruckPriceForm)
+      setOcrResult({
+        brand: extractedData.brand,
+        chassisNumber: extractedData.chassis,
+        engineNumber: extractedData.engine,
+        year: extractedData.year
+      });
+
+      alert("สแกนและอัปโหลดรูปสำเร็จ ระบบเตรียมกรอกข้อมูลให้ท่าน");
+
+    } catch (error) {
+      console.error("Capture handle error:", error);
+      alert("เกิดข้อผิดพลาดในการประมวลผลรูปภาพ");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const INACTIVE_TIMEOUT = 60 * 60 * 1000;
 
   // --- Functions ---
   const nextImage = () => {
-    if (!truckData) return;
-    setCurrentImageIndex((prev) => prev === truckData.images.length - 1 ? 0 : prev + 1);
+    if (totalImages === 0) return;
+    setCurrentImageIndex((prev) => (prev === totalImages - 1 ? 0 : prev + 1));
   };
 
   const prevImage = () => {
-    if (!truckData) return;
-    setCurrentImageIndex((prev) => prev === 0 ? truckData.images.length - 1 : prev - 1);
+    if (totalImages === 0) return;
+    setCurrentImageIndex((prev) => (prev === 0 ? totalImages - 1 : prev - 1));
   };
 
   const exportToPDF = async () => {
@@ -126,6 +232,23 @@ export default function CheckPricePage() {
       events.forEach(event => window.removeEventListener(event, resetTimer));
     };
   }, [navigate]);
+
+  // 1. โหลดข้อมูลประเภทรถตอนเปิดหน้าเว็บ
+  useEffect(() => {
+    const loadTypes = async () => {
+      const types = await fetchVehicleTypes();
+      setDbVehicleTypes(types);
+    };
+    loadTypes();
+  }, []);
+
+  useEffect(() => {
+    const loadTypes = async () => {
+      const types = await fetchBrandNames();
+      setDbVehicleBrands(types);
+    };
+    loadTypes();
+  }, []);
 
   const handleSubmit = async (data: TruckData) => {
     setIsLoading(true);
@@ -229,21 +352,95 @@ export default function CheckPricePage() {
 
       <main className="max-w-7xl mx-auto px-8 py-12 grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-8">
+          <h1 className="text-2xl font-bold mb-4">ตรวจสอบราคารถ</h1>
+          {/* ปุ่มเปิดกล้อง (วางไว้ก่อนฟอร์มกรอกข้อมูล) */}
+          {!isCameraOpen && (
+            <button
+              onClick={() => setIsCameraOpen(true)}
+              className="flex items-center gap-2 mb-6 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all shadow-md"
+            >
+              <Camera size={20} />
+              สแกนหน้าเล่มทะเบียน
+            </button>
+          )}
+
+          {/* ส่วนแสดงกล้อง (ถ้าเปิดอยู่) */}
+          {isCameraOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 flex flex-col items-center justify-center p-4">
+              <div className="w-full max-w-lg bg-white rounded-2xl p-4 relative">
+                <button 
+                  onClick={() => setIsCameraOpen(false)}
+                  className="absolute top-2 right-2 p-2 text-gray-500 hover:bg-gray-100 rounded-full z-10"
+                >
+                  <X size={24} />
+                </button>
+                <CameraScanner onCapture={handleCapture} />
+              </div>
+            </div>
+          )}
+
+          {/* ส่วนแสดงรูปที่ถ่ายได้ (Preview) */}
+          {capturedImage && (
+            <div className="mb-6 p-4 border rounded-lg bg-gray-50 flex items-center gap-4">
+              <img src={capturedImage} alt="Captured" className="w-32 h-24 object-cover rounded border" />
+              <div>
+                <p className="text-sm font-medium text-gray-600">รูปหน้าเล่มที่สแกนแล้ว</p>
+                <button 
+                  onClick={() => setCapturedImage(null)}
+                  className="text-xs text-red-500 underline"
+                >
+                  ลบรูป/ถ่ายใหม่
+                </button>
+              </div>
+            </div>
+          )}
+          {isUploading && (
+            <div className="flex flex-col items-center justify-center p-6 bg-blue-50 rounded-lg border border-blue-200">
+              <RefreshCw className="animate-spin text-blue-600 mb-2" size={32} />
+              <p className="text-blue-800 font-medium">กำลังประมวลผล OCR...</p>
+              {/* 🚀 นำมาใช้งานตรงนี้ Error "never read" จะหายไปทันที */}
+              <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2 max-w-[200px]">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                  style={{ width: `${ocrProgress}%` }}
+                ></div>
+              </div>
+              <p className="text-sm text-blue-500 mt-1">{ocrProgress}%</p>
+            </div>
+          )}
           <TruckPriceForm 
             onSubmit={handleSubmit} 
-            calculationResult={calculationResult} // ✅ ส่งค่าที่มี logId กลับไปให้ Form
+            calculationResult={calculationResult}
+            initialData={ocrResult} // 👈 เพิ่มบรรทัดนี้เพื่อให้ฟอร์มรับค่าที่สแกนได้
           />
           
           {/* ส่วนแสดงรูปที่ User อัปโหลด */}
-          {truckData?.images && truckData.images.length > 0 && (
+          {allImages.length > 0 && (
             <div className="bg-white rounded-2xl shadow-xl border-t-4 border-[#CB333B] overflow-hidden">
               <div className="bg-[#CB333B] text-white px-6 py-2 flex justify-between text-sm font-bold">
                 <span>รูปที่กำลังตรวจสอบ</span>
-                <span>{currentImageIndex + 1} / {truckData.images.length}</span>
+                <span>{currentImageIndex + 1} / {totalImages}</span>
               </div>
+              
               <div className="relative p-4 bg-gray-50 flex justify-center h-80">
-                <img src={truckData.images[currentImageIndex]} className="max-h-full object-contain rounded-lg" alt="Truck" />
-                {truckData.images.length > 1 && (
+                <div className="relative h-full flex items-center justify-center">
+                  {/* แสดงรูปตาม Index ปัจจุบัน (ซึ่งรวมหน้าเล่มไปแล้ว) */}
+                  <img 
+                    src={allImages[currentImageIndex]} 
+                    className="max-h-full object-contain rounded-lg" 
+                    alt="Truck or Registration" 
+                  />
+
+                  {/* ✅ ถ้า Index ปัจจุบันคือ 0 และมีหน้าเล่ม ให้โชว์ป้ายกำกับ */}
+                  {imageUrl && currentImageIndex === 0 && (
+                    <div className="absolute bottom-2 bg-emerald-500/90 text-white text-[12px] px-3 py-1 rounded-full shadow-lg">
+                      หน้าเล่มทะเบียน
+                    </div>
+                  )}
+                </div>
+
+                {/* ปุ่มกดเลื่อนภาพ */}
+                {totalImages > 1 && (
                   <>
                     <button onClick={prevImage} className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow">❮</button>
                     <button onClick={nextImage} className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow">❯</button>
@@ -281,15 +478,6 @@ export default function CheckPricePage() {
                 </div>
                 
                 <PriceResultTable data={truckData} />
-
-                <div className="mt-8 pt-6 border-t">
-                  <h3 className="font-bold text-gray-700 mb-4">รูปถ่ายประกอบการประเมิน</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {truckData.images?.slice(0, 4).map((img, i) => (
-                      <img key={i} src={img} className="w-full h-32 object-contain border rounded-lg bg-gray-50" />
-                    ))}
-                  </div>
-                </div>
             </div>
           ) : (
             <div className="bg-white rounded-2xl p-12 border-2 border-dashed flex flex-col items-center justify-center min-h-[400px] text-gray-400">
@@ -379,12 +567,48 @@ export default function CheckPricePage() {
           </table>
 
           {/* รูปถ่ายประกอบ (ถ้ามี) */}
-          {truckData?.images && truckData.images.length > 0 && (
-            <div>
-              <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>รูปถ่ายประกอบการประเมิน:</p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                {truckData.images.slice(0, 4).map((img, i) => (
-                  <img key={i} src={img} style={{ width: '100%', height: '200px', objectFit: 'contain', border: '1px solid #e2e8f0', borderRadius: '4px' }} />
+          {allImages.length > 0 && (
+            <div style={{ marginTop: '20px' }}>
+              <p style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '10px', color: '#333' }}>
+                รูปถ่ายประกอบการประเมิน:
+              </p>
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: '1fr 1fr', 
+                gap: '15px' 
+              }}>
+                {allImages.slice(0, 4).map((img, i) => (
+                  <div key={i} style={{ position: 'relative' }}>
+                    <img 
+                      src={img} 
+                      style={{ 
+                        width: '100%', 
+                        height: '180px', 
+                        objectFit: 'contain', 
+                        border: '1px solid #e2e8f0', 
+                        borderRadius: '8px',
+                        backgroundColor: '#f8fafc'
+                      }} 
+                    />
+                    {/* ✅ ถ้าเป็นรูปแรก และพี่มี imageUrl (หน้าเล่ม) ให้ทำแถบคาดบอกใน PDF ด้วย */}
+                    {i === 0 && imageUrl && (
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '0',
+                        left: '0',
+                        right: '0',
+                        backgroundColor: 'rgba(16, 185, 129, 0.9)', // สี emerald-500
+                        color: 'white',
+                        fontSize: '10px',
+                        textAlign: 'center',
+                        padding: '2px 0',
+                        borderBottomLeftRadius: '8px',
+                        borderBottomRightRadius: '8px'
+                      }}>
+                        หน้าเล่มทะเบียน
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>

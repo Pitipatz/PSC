@@ -19,6 +19,17 @@ const CameraScanner = ({ onCapture }: { onCapture: (imgBase64: string) => void }
     setFacingMode(prev => prev === "user" ? "environment" : "user");
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        onCapture(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   return (
     <div className="flex flex-col items-center w-full max-w-md mx-auto p-4">
       <div className="relative w-full aspect-[4/3] overflow-hidden rounded-xl bg-black shadow-lg">
@@ -68,9 +79,7 @@ const CameraScanner = ({ onCapture }: { onCapture: (imgBase64: string) => void }
 
         <label className="p-3 bg-gray-200 rounded-full hover:bg-gray-300 transition-colors cursor-pointer">
           <Upload size={24} className="text-gray-700" />
-          <input type="file" className="hidden" accept="image/*" onChange={(_e) => {
-             // Logic สำหรับ Upload รูปที่มีอยู่แล้ว
-          }} />
+          <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
         </label>
       </div>
     </div>

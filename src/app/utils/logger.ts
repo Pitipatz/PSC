@@ -1,14 +1,5 @@
 import { supabase } from '../utils/auth';
-
-const base64ToFile = (base64: string, filename: string) => {
-  const arr = base64.split(',');
-  const mime = arr[0].match(/:(.*?);/)?.[1];
-  const bstr = atob(arr[1]);
-  let n = bstr.length;
-  const u8arr = new Uint8Array(n);
-  while (n--) u8arr[n] = bstr.charCodeAt(n);
-  return new File([u8arr], filename, { type: mime });
-};
+import { base64ToFile } from '../utils/base64ToFile';
 
 export async function logPriceCheck(
   userEmail: string,
@@ -16,10 +7,30 @@ export async function logPriceCheck(
   truckData: any,
   centralPrice: number,
   modelFound: string,
-  trailerLoan: number
+  trailerLoan: number,
+  registrationImage?: string
 ) {
   try {
+    let registrationImageUrl = null;
     const uploadedUrls: string[] = [];
+
+    // --- 1. จัดการรูปหน้าเล่ม (ถ้ามี) ---
+    if (registrationImage && registrationImage.startsWith('data:image')) {
+      const regFileName = `reg_${Date.now()}.jpg`;
+      const regFilePath = `${userEmail}/registration/${regFileName}`;
+      const regFile = base64ToFile(registrationImage, regFileName);
+
+      const { error: regUploadError } = await supabase.storage
+        .from('truck-images')
+        .upload(regFilePath, regFile);
+
+      if (!regUploadError) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('truck-images')
+          .getPublicUrl(regFilePath);
+        registrationImageUrl = publicUrl;
+      }
+    }
 
     // 1. จัดการอัปโหลดรูปภาพ
     if (truckData.images && truckData.images.length > 0) {
@@ -64,6 +75,7 @@ export async function logPriceCheck(
           central_price: centralPrice,
           model_found: modelFound,
           image_urls: uploadedUrls,
+          registration_image_url: registrationImageUrl,
           has_trailer: truckData.hasTrailer,
           trailer_loan_amount: trailerLoan,
           line_notify_sent: false
@@ -85,6 +97,31 @@ export async function logPriceCheck(
     return null;
   }
 }
+
+// ดึงข้อมูลชื่อประเภทรถทั้งหมดมาทำเป็น Array ของ string
+export const fetchVehicleTypes = async () => {
+  const { data, error } = await supabase
+    .from('VehicleType')
+    .select('vehicletype');
+
+  if (error) {
+    console.error("Error fetching vehicle types:", error);
+    return [];
+  }
+  return data.map(item => item.vehicletype);
+};
+
+export const fetchBrandNames = async () => {
+  const { data, error } = await supabase
+    .from('Brands')
+    .select('name');
+
+  if (error) {
+    console.error("Error fetching vehicle types:", error);
+    return [];
+  }
+  return data.map(item => item.name);
+};
 
 export async function updateLineNotifyStatus(logId: string) {
   try {

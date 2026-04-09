@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useForm, Controller } from 'react-hook-form'; // ✅ เพิ่ม Import
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -26,13 +27,15 @@ export interface TruckData {
   year: string;
   salePrice: number;
   images: string[];
-  hasTrailer: boolean; // ✅ เพิ่มฟิลด์นี้
+  registration_image_url: string;
+  hasTrailer: boolean;
+  otherBrand?: string; // ✅ เพิ่มเผื่อกรณีเลือก 'อื่นๆ'
 }
 
 interface TruckPriceFormProps {
   onSubmit: (data: TruckData) => void;
-  // เพิ่ม prop เพื่อรับค่าผลการคำนวณจาก CheckPricePage (ถ้ามี)
   calculationResult?: any;
+  initialData?: any;
 }
 
 interface VehicleType {
@@ -40,79 +43,116 @@ interface VehicleType {
   vehicletype: string;
 }
 
-export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormProps) {
+interface Brand {
+  id: string;
+  name: string;
+}
 
-  // 1. State สำหรับข้อมูลฟอร์ม
-  const [formData, setFormData] = useState<TruckData>({
-    brand: '',
-    vehicleType: '',
-    horsepower: '',
-    chassisNumber: '',
-    engineNumber: '',
-    year: '',
-    salePrice: 0,
-    images: [],
-    hasTrailer: false, // ✅ กำหนดค่าเริ่มต้น
+export function TruckPriceForm({ onSubmit, calculationResult, initialData }: TruckPriceFormProps) {
+
+  // ✅ 1. ตั้งค่า useForm
+  const {
+    register,
+    handleSubmit,
+    control,
+    setValue,
+    watch,
+    reset,
+    getValues,
+    formState: { errors }
+  } = useForm<TruckData>({
+    defaultValues: {
+      brand: '',
+      vehicleType: '',
+      horsepower: '',
+      chassisNumber: '',
+      engineNumber: '',
+      year: '',
+      salePrice: 0,
+      images: [],
+      registration_image_url: '',
+      hasTrailer: false,
+      otherBrand: '',
+    }
   });
-  
 
-  // 2. State อื่นๆ
+  // ใช้ watch เพื่อดูค่า brand ว่าเป็น "อื่นๆ" หรือไม่ จะได้แสดงช่องกรอกเพิ่ม
+  const selectedBrand = watch('brand');
+  const currentImages = watch('images') || [];
   const [isLoading, setIsLoading] = useState(false);
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
   const [isLoadingTypes, setIsLoadingTypes] = useState(true);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-  const [otherBrand, setOtherBrand] = useState('');
   const currentUser = getCurrentUser();
   const [isLineSent, setIsLineSent] = useState(false);
 
-  // ดึงข้อมูลลักษณะรถ
+  // ✅ 2. จัดการ initialData ด้วย reset() ของ RHF
+  useEffect(() => {
+    if (initialData) {
+      reset({
+        ...initialData,
+        brand: initialData.brand || '',
+        chassisNumber: initialData.chassis || '',
+        otherBrand: initialData.brand === 'อื่นๆ' ? (initialData.otherBrand || '') : ''
+      });
+    }
+  }, [initialData, reset]);
+
+  // ดึงข้อมูลลักษณะรถ (เหมือนเดิม)
   useEffect(() => {
     const fetchVehicleTypes = async () => {
-      // 1. ดึงจาก Cache มาโชว์ก่อน (เพื่อความเร็ว)
       const cachedData = sessionStorage.getItem('v_types_cache');
       if (cachedData) {
         setVehicleTypes(JSON.parse(cachedData));
-        // ไม่ต้อง return; แล้วนะ ให้มันทำงานบรรทัดต่อไปต่อ
       }
-
       try {
-        // 2. แอบไปดึงจาก Supabase (เพื่อความสดใหม่)
-        const { data } = await supabase
-          .from('VehicleType')
-          .select('*')
-          .order('vehicletype');
-
+        const { data } = await supabase.from('VehicleType').select('*').order('vehicletype');
         if (data) {
-          // 3. อัปเดตหน้าจอด้วยข้อมูลล่าสุดจาก DB
           setVehicleTypes(data);
-          // 4. อัปเดต Cache ให้เป็นปัจจุบันที่สุด
           sessionStorage.setItem('v_types_cache', JSON.stringify(data));
-          setIsLoadingTypes(false); // ✅ ต้องเพิ่มบรรทัดนี้ เพื่อให้ Dropdown เปิดให้กดได้
+          setIsLoadingTypes(false);
         }
       } catch (err) {
         console.error("Fetch error:", err);
       }
     };
-
     fetchVehicleTypes();
   }, []);
 
+  useEffect(() => {
+    const fetchBrands = async () => {
+      const cachedData = sessionStorage.getItem('brands_cache');
+      if (cachedData) {
+        setBrands(JSON.parse(cachedData));
+      }
+      try {
+        const { data } = await supabase.from('Brands').select('*').order('name');
+        if (data) {
+          setBrands(data);
+          sessionStorage.setItem('brands_cache', JSON.stringify(data));
+          setIsLoadingTypes(false);
+        }
+      } catch (err) {
+        console.error("Fetch error:", err);
+      }
+    };
+    fetchBrands();
+  }, []);
+
+  // ✅ 3. จัดการรูปภาพ (ใช้ setValue เพื่ออัปเดตข้อมูลเข้าไปใน RHF)
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    
     if (files && files.length > 0) {
       const fileArray = Array.from(files).slice(0, 4);
       const newImages: string[] = [];
 
-      // ใช้ for...of เพื่อรอจัดการบีบอัดทีละรูป
       for (const file of fileArray) {
         if (file.size > 10 * 1024 * 1024) { 
           alert(`ไฟล์ ${file.name} ใหญ่เกินไป (เกิน 10MB)`);
           continue; 
         }
-
         try {
-          // 1. บีบอัดรูปภาพ
           const resizedBase64 = await resizeImage(file, 1024, 1024); 
           newImages.push(resizedBase64);
         } catch (error) {
@@ -120,44 +160,38 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
         }
       }
 
-      // 2. อัปเดต State ทั้งหมดในครั้งเดียว
-      // - setImagePreviews สำหรับแสดงรูปบนหน้าจอ
-      // - setFormData สำหรับเตรียมส่งข้อมูลไป Google Drive
       setImagePreviews(newImages);
-      setFormData(prev => ({ ...prev, images: newImages }));
+      setValue('images', newImages); // ยัดค่าลง Hook Form
     }
   };
+
 
   // ✅ ฟังก์ชันลบรูป
   const removeImage = (index: number) => {
     const updatedPreviews = imagePreviews.filter((_, i) => i !== index);
-    const updatedImages = formData.images.filter((_, i) => i !== index);
+    const updatedImages = currentImages.filter((_, i) => i !== index);
     setImagePreviews(updatedPreviews);
-    setFormData({ ...formData, images: updatedImages });
+    setValue('images', updatedImages); // อัปเดตค่า Hook Form
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); 
+  // ✅ 4. ฟังก์ชัน Submit รับ data ที่ถูก Validate แล้วจาก RHF 
+  const onSubmitForm = async (data: TruckData) => {
     setIsLoading(true);
-
     try {
-
-      // 4. ส่งข้อมูลกลับไปหน้าหลักเพื่อคำนวณและแสดง Table
-      onSubmit(formData);
-
+      onSubmit(data);
     } catch (error) {
       console.error("Error:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
     } finally {
-      // ปิดสถานะการโหลด
       setIsLoading(false); 
     }
   };
 
   // ✅ ฟังก์ชันจัดการรูปภาพหลายรูป (บีบอัด + Preview + เก็บข้อมูล)
-  const handleSendLine = async () => {
+  const handleSendLine = async () => {    
     // 1. ดึง logId ที่มีอยู่แล้วจากการคำนวณ (ห้ามสร้างใหม่)
     const existingLogId = calculationResult?.logId; 
+    const currentData = getValues();
 
     if (!existingLogId) {
       alert("ไม่พบข้อมูลการบันทึก กรุณากดคำนวณราคากลางก่อนครับ");
@@ -174,7 +208,7 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
       // 2. ดึงข้อมูลที่เพิ่งบันทึก (รวมถึง URLs รูปภาพ) มาส่ง LINE
       const { data: latestLog } = await supabase
         .from('check_price_logs')
-        .select('image_urls, brand, vehicle_type, horsepower, year, engine_number, chassis_number, sale_price, has_trailer')
+        .select('image_urls, brand, vehicle_type, horsepower, year, engine_number, chassis_number, sale_price, has_trailer, registration_image_url')
         .eq('id', existingLogId)
         .single();
 
@@ -183,7 +217,7 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
         const messages = createPriceCheckFlex({
           id: existingLogId,
           mkt: firstName,
-          brand: latestLog.brand === 'อื่นๆ' ? otherBrand : formData.brand,
+          brand: latestLog.brand === 'อื่นๆ' ? currentData.otherBrand : latestLog.brand,
           vehicleType: latestLog.vehicle_type,
           horsepower: latestLog.horsepower,
           chassisNumber: latestLog.chassis_number,
@@ -191,7 +225,8 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
           year: latestLog.year,
           salePrice: latestLog.sale_price,
           hasTrailer: latestLog.has_trailer,
-          images: latestLog.image_urls,
+          images: latestLog.image_urls, // อาร์เรย์รูปรถ
+          registrationImageUrl: latestLog.registration_image_url // 👈 ต้องส่งชื่อนี้ไป!
           //editUrl: window.location.href // หรือ link ที่ต้องการให้เขากด
         });        
 
@@ -240,27 +275,12 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
 
   // เพิ่มฟังก์ชันนี้ไว้ก่อน return ครับ
   const handleReset = () => {
-    // 1. ล้าง State ภายในฟอร์มเอง
-    setFormData({
-      brand: '',
-      vehicleType: '',
-      horsepower: '',
-      chassisNumber: '',
-      engineNumber: '',
-      year: '',
-      salePrice: 0,
-      images: [],
-      hasTrailer: false,
-    });
+    reset(); // ล้างข้อมูล Form ทั้งหมดกลับไปค่า default
     setImagePreviews([]);
-    setOtherBrand('');
     setIsLineSent(false);
-
-    // 2. ส่ง null กลับไปบอกหน้าหลัก (onSubmit คือ prop ที่คุณรับมา)
     if (onSubmit) {
       onSubmit(null as any); 
     }
-
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -275,93 +295,121 @@ export function TruckPriceForm({ onSubmit, calculationResult }: TruckPriceFormPr
         </CardTitle>
       </CardHeader>
       
-      <CardContent className="pt-8 pb-8 px-6">
-        <form onSubmit={handleSubmit} className="space-y-5">
+      <CardContent>
+        {/* ✅ ห่อด้วย form และเรียกใช้ handleSubmit */}
+        <form onSubmit={handleSubmit(onSubmitForm)} className="space-y-4 mt-4">
         
           {/* ยี่ห้อรถ */}
           <div className="space-y-2">
-            <Label htmlFor="brand" className="text-gray-700 font-semibold">ยี่ห้อรถ *</Label>
-            <Select
-              value={formData.brand}
-              onValueChange={(value) => setFormData({ ...formData, brand: value })}
-              required
-            >
-              <SelectTrigger id="brand" className="border-gray-300 h-12 rounded-lg">
-                <SelectValue placeholder="เลือกยี่ห้อรถ" />
-              </SelectTrigger>
-              <SelectContent>
-                {["HINO", "ISUZU", "รถพ่วง", "NISSAN", "MITSUBISHI", "UD", "VOLVO", "TOYOTA", "อื่นๆ"].map(b => (
-                  <SelectItem key={b} value={b}>{b}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-gray-700 font-semibold">ลักษณะรถ *</Label>
+            <Controller
+              name="brand"
+              control={control}
+              rules={{ required: "กรุณาเลือกยี่ห้อรถ" }}
+              render={({ field }) => (
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  disabled={isLoadingTypes}
+                  required
+                >
+                  <SelectTrigger className="border-gray-300 h-12">
+                    <SelectValue placeholder={isLoadingTypes ? "กำลังโหลด..." : "กรุณาเลือกยี่ห้อรถ"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {brands.map((type) => (
+                      <SelectItem key={type.id} value={type.name}>
+                        {type.name}  {/* ✅ แก้จาก {type} เป็น {type.vehicletype} */}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {errors.vehicleType && <span className="text-red-500">{errors.vehicleType.message}</span>}
           </div>
 
           {/* ระบุยี่ห้อเพิ่มเติม (แสดงเมื่อเลือกอื่นๆ) */}
-          {formData.brand === 'อื่นๆ' && (
+          {/* แก้จากของเดิม เป็นแบบนี้ครับ */}
+          {selectedBrand === 'อื่นๆ' && (
             <div className="space-y-2 p-4 bg-gray-50 rounded-lg border-l-4 border-[#001489]">
               <Label htmlFor="otherBrand" className="text-[#001489] font-bold text-sm">ระบุยี่ห้อรถเพิ่มเติม *</Label>
-              <Input
-                id="otherBrand"
+              <Input 
+                {...register("otherBrand", { required: "กรุณากรอกยี่ห้อ" })} 
                 placeholder="เช่น SCANIA"
-                value={otherBrand}
-                onChange={(e) => setOtherBrand(e.target.value)}
-                required
-                className="bg-white"
-              />
+              /> {/* ✅ เอา onChange เดิมออกไปได้เลย */}
             </div>
           )}
 
           {/* ลักษณะรถ */}
           <div className="space-y-2">
             <Label className="text-gray-700 font-semibold">ลักษณะรถ *</Label>
-            <Select
-              value={formData.vehicleType}
-              onValueChange={(value) => setFormData({ ...formData, vehicleType: value })}
-              disabled={isLoadingTypes}
-              required
-            >
-              <SelectTrigger className="border-gray-300 h-12">
-                <SelectValue placeholder={isLoadingTypes ? "กำลังโหลด..." : "เลือกลักษณะรถ"} />
-              </SelectTrigger>
-              <SelectContent>
-                {vehicleTypes.map((type) => (
-                  <SelectItem key={type.id} value={type.vehicletype}>
-                    {type.vehicletype}  {/* ✅ แก้จาก {type} เป็น {type.vehicletype} */}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Controller
+              name="vehicleType"
+              control={control}
+              rules={{ required: "กรุณาเลือกประเภทรถ" }}
+              render={({ field }) => (
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  disabled={isLoadingTypes}
+                  required
+                >
+                  <SelectTrigger className="border-gray-300 h-12">
+                    <SelectValue placeholder={isLoadingTypes ? "กำลังโหลด..." : "กรุณาเลือกประเภทรถ"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {vehicleTypes.map((type) => (
+                      <SelectItem key={type.id} value={type.vehicletype}>
+                        {type.vehicletype}  {/* ✅ แก้จาก {type} เป็น {type.vehicletype} */}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {errors.vehicleType && <span className="text-red-500">{errors.vehicleType.message}</span>}
           </div>
 
           {/* ข้อมูลอื่นๆ: แรงม้า, แชซซี, เครื่อง, ปี, ราคา (รวมกลุ่มเพื่อความประหยัดพื้นที่) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label className="text-sm font-semibold text-gray-600">แรงม้า</Label>
-              <Input placeholder="เช่น 260 HP" value={formData.horsepower} onChange={e => setFormData({...formData, horsepower: e.target.value})} />
+              <Input {...register("horsepower", { required: "กรุณากรอกแรงม้า" })} placeholder="เช่น 260"/>
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold text-gray-600">ปีรถ (พ.ศ.) *</Label>
-              <Input required placeholder="2569" value={formData.year} onChange={e => setFormData({...formData, year: e.target.value})} />
+              <Input {...register("year", { required: "กรุณากรอกปีที่จดทะเบียน" })} placeholder="เช่น 2569" required/>
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold text-gray-600">เลขแชซซี</Label>
-              <Input placeholder="กรอกเลขแชซซี" value={formData.chassisNumber} onChange={e => setFormData({...formData, chassisNumber: e.target.value})} />
+              <Input {...register("chassisNumber", { required: "กรุณากรอกเลขแชซซี" })} placeholder="กรุณากรอกเลขแชซซี" required/>
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold text-gray-600">เลขเครื่อง</Label>
-              <Input placeholder="กรอกเลขเครื่อง" value={formData.engineNumber} onChange={e => setFormData({...formData, engineNumber: e.target.value})} />
+              <Input {...register("engineNumber", { required: "กรุณากรอกเลขเครื่อง" })} placeholder="กรุณากรอกเลขเครื่อง"/>
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold text-gray-600">ราคาขาย (บาท) *</Label>
-              <NumericInput required placeholder="1,500,000" value={formData.salePrice} onChange={(val: number) => setFormData({...formData, salePrice: val})} />
+              <Controller
+                name="salePrice"
+                control={control}
+                rules={{ required: "กรุณากรอกราคาขาย" }}
+                render={({ field }) => (
+                  <NumericInput 
+                    required 
+                    placeholder="1,500,000" 
+                    value={field.value} 
+                    onChange={field.onChange} // ✅ ให้ RHF เป็นตัวจัดการ onChange
+                  />
+                )}
+              />
             </div>
             <div className="flex items-center space-x-2 pt-6">
               <input 
                 type="checkbox" 
                 id="hasTrailer"
-                checked={formData.hasTrailer}
-                onChange={(e) => setFormData({ ...formData, hasTrailer: e.target.checked })}
+                {...register("hasTrailer")} // ✅ ใช้ register แทน checked และ onChange เดิม
                 className="w-5 h-5 text-[#CB333B] rounded focus:ring-[#CB333B]"
               />
               <Label htmlFor="hasTrailer" className="text-gray-700 cursor-pointer">

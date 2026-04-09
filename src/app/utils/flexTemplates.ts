@@ -10,11 +10,20 @@ export const createPriceCheckFlex = (data: {
   salePrice: number;
   hasTrailer: boolean;
   images: string[];
+  registrationImageUrl?: string;
   // url: string;
 }) => {
   const mainBubble = {
-        type: "bubble",
-        size: "mega",
+    type: "bubble",
+    size: "mega",
+    header: { // เพิ่ม Header สีน้ำเงินให้ดูเด่น
+        type: "box",
+        layout: "vertical",
+        backgroundColor: "#001489",
+        contents: [
+        { type: "text", text: "สรุปข้อมูลการประเมินราคา", color: "#ffffff", weight: "bold", size: "sm" }
+        ]
+    },
         body: {
           type: "box",
           layout: "vertical",
@@ -75,43 +84,80 @@ export const createPriceCheckFlex = (data: {
         footer: {
             type: "box",
             layout: "vertical",
+            spacing: "sm",
             contents: [
-                {
-                    type: "button",
-                    style: "primary",
-                    color: "#1E90FF",
-                    action: {
-                    type: "uri",
-                    label: "📝 Update รายการ",
-                    // ✅ ส่ง id ไปกับ URL เพื่อให้หน้าเว็บดึงข้อมูลถูกตัว
-                    uri: `https://lineflex-paisan.netlify.app/pricecheck/edit/${data.id}`
-                    },
-                    height: "sm"
-                }
+            {
+                type: "button",
+                style: "primary",
+                color: "#1E90FF",
+                action: {
+                type: "uri",
+                label: "📝 Update รายการ",
+                uri: `https://lineflex-paisan.netlify.app/pricecheck/edit/${data.id}`
+                },
+                height: "sm"
+            },
+            {
+                type: "button",
+                style: "secondary", // ปุ่มสีเทาเข้ม
+                color: "#f0f0f0", 
+                action: {
+                type: "uri",
+                label: "🖨️ พิมพ์ใบสรุปผล",
+                // ลิงก์ไปยังหน้าพิมพ์ โดยส่ง ID ไปด้วย
+                uri: `https://lineflex-paisan.netlify.app/pricecheck/print/${data.id}`
+                },
+                height: "sm"
+            }
             ]
         }
     };
+    
+    // --- 1. Bubble หน้าเล่มทะเบียน (ถ้ามี) ---
+    const registrationBubble = data.registrationImageUrl ? [{
+    type: "bubble",
+    body: {
+        type: "box",
+        layout: "vertical",
+        paddingAll: "0px",
+        contents: [
+        {
+            type: "image",
+            url: data.registrationImageUrl,
+            size: "full",
+            aspectMode: "cover",
+            aspectRatio: "2:3",
+            action: { type: "uri", label: "View Registration", uri: data.registrationImageUrl }
+        },
+        {
+            type: "box",
+            layout: "vertical",
+            position: "absolute",
+            backgroundColor: "#001489", // สีน้ำเงินเข้มตาม CI พี่
+            offsetTop: "0px",
+            paddingStart: "10px",
+            paddingEnd: "10px",
+            contents: [{ type: "text", text: "หน้าเล่มทะเบียน", color: "#ffffff", size: "xs", weight: "bold" }]
+        }
+        ]
+    }
+    }] : [];
     const imageBubbles = (data.images || []).map((url: string) => ({
-        "type": "bubble",
-        "body": {
-        "type": "box",
-        "layout": "vertical",
-        "contents": [
-            {
-            "type": "image",
-            "url": url, // URL จาก Supabase Storage
-            "size": "full",
-            "aspectMode": "cover",
-            "aspectRatio": "2:3",
-            "gravity": "top",
-            "action": {
-                "type": "uri",
-                "label": "View Image",
-                "uri": url // เมื่อกดที่รูป จะเปิด URL ของรูปนี้ขึ้นมา
+        type: "bubble",
+        body: {
+            type: "box",
+            layout: "vertical",
+            paddingAll: "0px",
+            contents: [
+                {
+                    type: "image",
+                    url: url,
+                    size: "full",
+                    aspectMode: "cover",
+                    aspectRatio: "2:3",
+                    action: { type: "uri", label: "View Image", uri: url }
                 }
-            }
-        ],
-        "paddingAll": "0px"
+            ]
         }
     }));
     return {
@@ -121,6 +167,7 @@ export const createPriceCheckFlex = (data: {
         type: "carousel",
         contents: [
           mainBubble,     // Bubble รายละเอียด
+          ...registrationBubble,
           ...imageBubbles // Bubble รูปภาพ (ถ้า images เป็น [] ส่วนนี้จะหายไปเองโดยอัตโนมัติ)
         ]
       }
