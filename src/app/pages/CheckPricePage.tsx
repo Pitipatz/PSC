@@ -1,29 +1,28 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { TruckPriceForm } from '../components/TruckPriceForm';
 import { PriceResultTable } from '../components/PriceResultTable';
 import { TruckImageGallery } from '../components/TruckImageGallery';
-import { logoutUser, supabase } from '../utils/auth';
+import { supabase } from '../utils/auth';
 import { logPriceCheck, fetchVehicleTypes, fetchBrandNames } from '../utils/logger';
 import { calculateCentralPrice, calculateTrailerAmount } from '../utils/priceCalculator';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import type { TruckData } from '../utils/types';
 import { TruckSpinner } from '../components/ui/truck-spinner';
-import { Header } from '../components/Header';
 import CameraScanner from '../components/CameraScanner'; // path ตามที่คุณวางไฟล์ไว้
 import { Camera, X, RefreshCw } from 'lucide-react';
 import { base64ToFile } from '../utils/base64ToFile';
 import { recognizeText, parseRegistrationData } from '../utils/ocrHelper';
+import { motion, useScroll, useSpring } from 'framer-motion';
+
 
 // ✅ ประกาศ Interface ให้ชัดเจนที่นี่ที่เดียว
 
 export default function CheckPricePage() {
-  const navigate = useNavigate();
+  const { setPageInfo } = useOutletContext<any>();
   const [truckData, setTruckData] = useState<TruckData | null>(null);
-  const [user, setUser] = useState<any>(null);
-  const [isInitializing, setIsInitializing] = useState(true);
-  const timerRef = useRef<number | null>(null);
+  const { user } = useOutletContext<{ user: any }>();
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [calculationInfo, setCalculationInfo] = useState<{ modelName: string; images: string[] }>({ modelName: '', images: [] });
   const [isLoading, setIsLoading] = useState(false);
@@ -43,12 +42,25 @@ export default function CheckPricePage() {
   ];
   // ปรับจำนวนตัวเลขบอกลำดับภาพ (Total)
   const totalImages = allImages.length;
-
+  
+  useEffect(() => {
+    // ✅ สั่งเปลี่ยน Title ของ Header จากหน้านี้ได้เลย
+    setPageInfo({ 
+      title: 'เช็คราคากลางรถบรรทุก', 
+      subtitle: 'Truck Appraisal' 
+    });
+  }, [setPageInfo]);
+  
   const uploadRegistrationImage = async (base64String: string) => {
+    if (!user?.email) { // 👈 เช็คเผื่อไว้ก่อน
+      throw new Error("User email is missing");
+    }
     try {
+
+      if (!user) throw new Error("Unauthorized");
       // 1. ตั้งชื่อไฟล์ให้ไม่ซ้ำกัน (Timestamp + Random String)
       const fileName = `reg-${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
-      const filePath = `${fileName}`; // เก็บไว้ที่ root ของ bucket หรือสร้าง folder เช่น 'uploads/${fileName}'
+      const filePath = `${user.email}/${fileName}`; // เก็บไว้ที่ root ของ bucket หรือสร้าง folder เช่น 'uploads/${fileName}'
 
       // 2. แปลง Base64 เป็น File Object โดยใช้ Helper ที่เราเขียนไว้
       const file = base64ToFile(base64String, fileName);
@@ -119,7 +131,11 @@ export default function CheckPricePage() {
         brand: extractedData.brand,
         chassisNumber: extractedData.chassis,
         engineNumber: extractedData.engine,
-        year: extractedData.year
+        year: extractedData.year,
+        vehicleType: extractedData.vehicleType,
+        horsepower: extractedData.horsepower,
+        registration_image_url: result.fullUrl,
+        registration_base64: base64Img
       });
 
       alert("สแกนและอัปโหลดรูปสำเร็จ ระบบเตรียมกรอกข้อมูลให้ท่าน");
@@ -132,8 +148,6 @@ export default function CheckPricePage() {
     }
   };
 
-  const INACTIVE_TIMEOUT = 60 * 60 * 1000;
-
   // --- Functions ---
   const nextImage = () => {
     if (totalImages === 0) return;
@@ -144,6 +158,23 @@ export default function CheckPricePage() {
     if (totalImages === 0) return;
     setCurrentImageIndex((prev) => (prev === 0 ? totalImages - 1 : prev - 1));
   };
+
+  // ฟังก์ชันสำหรับให้ Form เรียกใช้เมื่อรับค่า OCR ไปใส่ใน Input เรียบร้อยแล้ว
+  const handleOcrApplied = () => {
+    setOcrResult(null); 
+    // การ set เป็น null ตรงนี้ จะทำให้ props initialData ที่ส่งไปกลายเป็น null
+    // ฟอร์มจะไม่ถูก overwrite อีกเมื่อหน้าจอ Render ใหม่ครับ
+  };
+
+  const { scrollY } = useScroll(); // จับระยะการ Scroll
+  
+  // สร้างค่าแรงเฉื่อย (นุ่มๆ)
+  // ยิ่งเลข mass/stiffness/damping เยอะ จะยิ่งมีความหน่วงตามหลัง
+  const smoothY = useSpring(scrollY, {
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.001
+  });
 
   const exportToPDF = async () => {
     if (!truckData) return;
@@ -177,62 +208,6 @@ export default function CheckPricePage() {
     }, 100); // 👈 ดีเลย์ 100 มิลลิวินาที ชัวร์กว่าแน่นอน
   };
 
-  const handleAutoLogout = () => {
-    logoutUser();
-    navigate('/');
-    alert('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
-  };
-
-  const resetTimer = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(handleAutoLogout, INACTIVE_TIMEOUT);
-  };
-
-  // --- Effects ---
-  useEffect(() => {
-  const initAuth = async () => {
-    try {
-      // 1. เช็ค Session ก่อน
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate('/', { replace: true });
-        return;
-      }
-
-      // 2. ดึงข้อมูลโปรไฟล์แบบละเอียด (เหมือนหน้า Profile)
-      const { data: profileData, error } = await supabase
-        .from('profiles')
-        .select('*, branches(name_th)')
-        .eq('id', session.user.id)
-        .single();
-
-      if (error) throw error;
-        // 3. เซ็ต State user ด้วยข้อมูลที่มีทั้งชื่อ, สาขา และ avatar_url
-        setUser({
-          id: profileData.id,
-          email: profileData.email,
-          name: `${profileData.first_name} ${profileData.last_name}`,
-          branch: profileData.branches?.name_th,
-          avatar_url: profileData.avatar_url
-        });
-
-      } catch (err) {
-        console.error("Auth error:", err);
-        navigate('/', { replace: true });
-      } finally {
-        setIsInitializing(false);
-      }
-    };
-    initAuth();
-    resetTimer();
-    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
-    events.forEach(event => window.addEventListener(event, resetTimer));
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      events.forEach(event => window.removeEventListener(event, resetTimer));
-    };
-  }, [navigate]);
-
   // 1. โหลดข้อมูลประเภทรถตอนเปิดหน้าเว็บ
   useEffect(() => {
     const loadTypes = async () => {
@@ -251,15 +226,10 @@ export default function CheckPricePage() {
   }, []);
 
   const handleSubmit = async (data: TruckData) => {
-    setIsLoading(true);
-    resetTimer();
 
-    if (!data) {
-      // ถ้า data เป็น null (มาจากการกด "กรอกข้อมูลรถคันใหม่")
-      setCalculationResult(null); // ล้างค่าผลการคำนวณเดิมทิ้ง
-      setTruckData(null);
-      setIsLoading(false);
-      return; // จบการทำงาน ไม่ต้องไปทำส่วนคำนวณข้างล่าง
+    if (!user) { // 👈 เช็คจาก user ที่ได้จาก context
+      alert("ไม่พบข้อมูลผู้ใช้งาน กรุณาเข้าสู่ระบบใหม่");
+      return;
     }
 
     try {
@@ -295,7 +265,8 @@ export default function CheckPricePage() {
         data,
         centralPrice,
         modelName,
-        trailerLoan
+        trailerLoan,
+        capturedImage || undefined
       );
 
       // 4. จัดการเวลาแสดงผล
@@ -340,17 +311,9 @@ export default function CheckPricePage() {
     }
   }; // จบฟังก์ชัน handleSubmit อย่างถูกต้อง
 
-  if (isInitializing) return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="animate-spin rounded-full h-10 w-10 border-4 border-[#001489] border-t-transparent"></div>
-    </div>
-  );
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-      <Header user={user} title='ระบบตรวจสอบราคากลาง' subtitle='Truck Appraisal' />
-
-      <main className="max-w-7xl mx-auto px-8 py-12 grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <div className="max-w-7xl mx-auto space-y-8">
+      <main className="max-w-7xl mx-auto px-8 py-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-8">
           <h1 className="text-2xl font-bold mb-4">ตรวจสอบราคารถ</h1>
           {/* ปุ่มเปิดกล้อง (วางไว้ก่อนฟอร์มกรอกข้อมูล) */}
@@ -409,9 +372,23 @@ export default function CheckPricePage() {
             </div>
           )}
           <TruckPriceForm 
-            onSubmit={handleSubmit} 
+            onSubmit={(data) => {
+              if (data === null) {
+                setTruckData(null);
+                setCalculationResult(null);
+                setCalculationInfo({ modelName: '', images: [] });
+                setCapturedImage(null);
+                setOcrResult(null);
+                setImageUrl(null);        // ✅ ล้างรูปหน้าเล่ม
+                setCurrentImageIndex(0);
+                return;
+              }
+              handleSubmit(data);
+            }}
+ 
             calculationResult={calculationResult}
-            initialData={ocrResult} // 👈 เพิ่มบรรทัดนี้เพื่อให้ฟอร์มรับค่าที่สแกนได้
+            initialData={ocrResult ? { ...ocrResult, registration_base64: capturedImage } : null}
+            onOcrApplied={handleOcrApplied}
           />
           
           {/* ส่วนแสดงรูปที่ User อัปโหลด */}
@@ -480,20 +457,20 @@ export default function CheckPricePage() {
                 <PriceResultTable data={truckData} />
             </div>
           ) : (
-            <div className="bg-white rounded-2xl p-12 border-2 border-dashed flex flex-col items-center justify-center min-h-[400px] text-gray-400">
-               <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-               <p className="text-lg">กรุณากรอกข้อมูลในฟอร์มเพื่อเริ่มตรวจสอบราคา</p>
+            <div className="relative h-full"> {/* Parent ต้องสูงเพื่อให้มีที่ให้ไหล */}
+              <motion.div 
+                style={{ y: smoothY }} // ให้ค่า Y วิ่งตามการ Scroll แบบนุ่มๆ
+                className="bg-white rounded-2xl p-12 border-2 border-dashed flex flex-col items-center justify-center min-h-[400px] text-gray-400 shadow-lg hover:shadow-xl transition-shadow duration-500"
+              >
+                <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p className="text-lg text-center">กรุณากรอกข้อมูลในฟอร์มเพื่อเริ่มตรวจสอบราคา</p>
+              </motion.div>
             </div>
           )}
         </div>
       </main>
-
-      <footer className="bg-white border-t mt-16 py-8">
-        <div className="max-w-7xl mx-auto px-8 flex justify-between items-center opacity-50">
-          <img src="/Paisan_Logo.png" alt="Logo" className="h-10" />
-          <p>© 2026 Paisan Capital Company Limited.</p>
-        </div>
-      </footer>
       
       {/* ----------------- ส่วนลับสำหรับ Print PDF (ไม่แสดงบนหน้าจอ) ----------------- */}
       <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>

@@ -11,7 +11,12 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 // นำไปสร้าง Supabase Client ต่อได้เลย
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: true,
+    storage: window.sessionStorage, // ✅ ปิด tab/browser หาย แต่ refresh ยังอยู่
+  }
+});
 
 export interface User {
   id: string;

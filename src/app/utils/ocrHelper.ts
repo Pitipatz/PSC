@@ -92,8 +92,17 @@ export const parseRegistrationData = (
   if (yearMatch) result.year = yearMatch[0];
 
   // --- 6. หาแรงม้า (Horsepower) ---
-  const hpMatch = cleanText.match(/(\d{2,3})\s*(?:แรงม้า|แรขม้า|แระม้า|HP|PS)/);
-  if (hpMatch) result.horsepower = hpMatch[1];
+  // พยายามหาแบบมีคำว่า "สูบ" นำหน้าก่อน (แม่นยำกว่า)
+  let hpMatch = cleanText.match(/สูบ\s*(\d{2,3})\s*(?:แรงม้า|แรขม้า|แระม้า|HP|PS)/);
+
+  // ถ้าหาไม่เจอจริงๆ ค่อยหาแบบเดิมที่คุณเคยเขียนไว้
+  if (!hpMatch) {
+    hpMatch = cleanText.match(/(\d{2,3})\s*(?:แรงม้า|แรขม้า|แระม้า|HP|PS)/);
+  }
+
+  if (hpMatch) {
+    result.horsepower = hpMatch[1];
+  }
 
   return result;
 };

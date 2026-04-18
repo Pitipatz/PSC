@@ -11,7 +11,7 @@ import { resizeImage } from '../utils/imageresizer'; // หรือพาธท
 import { supabase } from '../utils/auth'; // ตรวจสอบ path ของ supabase client ของคุณ
 import { getCurrentUser } from '../utils/auth';
 import { getBranchLineGroupId } from '../services/branchService';
-import { createPriceCheckFlex } from '../utils/flexTemplates';
+import { createPriceCheckFlex, createPriceCheckImageOnlyFlex } from '../utils/flexTemplates';
 import { sendLinePush } from '../services/lineService';
 import { updateLineNotifyStatus } from '../utils/logger';
 // import { logPriceCheck } from '../utils/logger';
@@ -28,6 +28,7 @@ export interface TruckData {
   salePrice: number;
   images: string[];
   registration_image_url: string;
+  registration_base64?: string;
   hasTrailer: boolean;
   otherBrand?: string; // ✅ เพิ่มเผื่อกรณีเลือก 'อื่นๆ'
 }
@@ -36,6 +37,7 @@ interface TruckPriceFormProps {
   onSubmit: (data: TruckData) => void;
   calculationResult?: any;
   initialData?: any;
+  onOcrApplied?: () => void;
 }
 
 interface VehicleType {
@@ -48,7 +50,7 @@ interface Brand {
   name: string;
 }
 
-export function TruckPriceForm({ onSubmit, calculationResult, initialData }: TruckPriceFormProps) {
+export function TruckPriceForm({ onSubmit, calculationResult, initialData, onOcrApplied }: TruckPriceFormProps) {
 
   // ✅ 1. ตั้งค่า useForm
   const {
@@ -92,12 +94,21 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
     if (initialData) {
       reset({
         ...initialData,
+        registration_base64: initialData.registration_base64 || initialData.registrationImage || '',
         brand: initialData.brand || '',
-        chassisNumber: initialData.chassis || '',
+        chassisNumber: initialData.chassisNumber || '',
+        engineNumber: initialData.engineNumber || '',
+        horsepower: initialData.horsepower || '',
+        year: initialData.year || '',
+        salePrice: initialData.salePrice || 0,
+        hasTrailer: initialData.hasTrailer || false,
         otherBrand: initialData.brand === 'อื่นๆ' ? (initialData.otherBrand || '') : ''
       });
+      if (onOcrApplied) {
+        onOcrApplied();
+      }
     }
-  }, [initialData, reset]);
+  }, [initialData, reset, onOcrApplied]);
 
   // ดึงข้อมูลลักษณะรถ (เหมือนเดิม)
   useEffect(() => {
@@ -188,7 +199,9 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
   };
 
   // ✅ ฟังก์ชันจัดการรูปภาพหลายรูป (บีบอัด + Preview + เก็บข้อมูล)
-  const handleSendLine = async () => {    
+  const handleSendLine = async () => {
+    console.log("1. เริ่มกดปุ่มส่ง LINE");
+
     // 1. ดึง logId ที่มีอยู่แล้วจากการคำนวณ (ห้ามสร้างใหม่)
     const existingLogId = calculationResult?.logId; 
     const currentData = getValues();
@@ -196,17 +209,23 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
     if (!existingLogId) {
       alert("ไม่พบข้อมูลการบันทึก กรุณากดคำนวณราคากลางก่อนครับ");
       return;
+    }    
+
+    // เช็คว่ามีข้อมูลพร้อมส่งไหม
+    if (!currentData || !currentUser) {
+      console.error("ข้อมูลไม่ครบ: truckData หรือ user หายไป");
+      return;
     }
     
-    const fullName = currentUser?.name || "Guset";
-    const firstName = fullName.split(' ')[0];
     const branchName = currentUser?.branch || "รอยืนยันสาขา"; // กำหนดค่าเริ่มต้นหากไม่มีข้อมูลสาขา
     // 1. เช็กความพร้อมข้อมูล (ใช้ logId เดิมถ้ามี หรือรัน logPriceCheck ใหม่)
     try {
       setIsLoading(true);
 
+      console.log("2. กำลังยิง Function 'line-notify'...");
+
       // 2. ดึงข้อมูลที่เพิ่งบันทึก (รวมถึง URLs รูปภาพ) มาส่ง LINE
-      const { data: latestLog } = await supabase
+      const { data: latestLog, error } = await supabase
         .from('check_price_logs')
         .select('image_urls, brand, vehicle_type, horsepower, year, engine_number, chassis_number, sale_price, has_trailer, registration_image_url')
         .eq('id', existingLogId)
@@ -214,9 +233,9 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
 
       if (latestLog) {
         // 3. สร้าง Message โดยใช้ URL จาก Database
-        const messages = createPriceCheckFlex({
+        const messageData = {
           id: existingLogId,
-          mkt: firstName,
+          mkt: currentUser?.name?.split(' ')[0] || "Guest",
           brand: latestLog.brand === 'อื่นๆ' ? currentData.otherBrand : latestLog.brand,
           vehicleType: latestLog.vehicle_type,
           horsepower: latestLog.horsepower,
@@ -225,12 +244,24 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
           year: latestLog.year,
           salePrice: latestLog.sale_price,
           hasTrailer: latestLog.has_trailer,
+          centralPrice: calculationResult?.centralPrice,
+          trailerAmount: calculationResult?.trailerLoan,
+          totalWithTrailer: calculationResult 
+            ? (calculationResult.centralPrice * 0.7) + calculationResult.trailerLoan 
+            : undefined,
           images: latestLog.image_urls, // อาร์เรย์รูปรถ
-          registrationImageUrl: latestLog.registration_image_url // 👈 ต้องส่งชื่อนี้ไป!
+          registrationImageUrl: latestLog.registration_image_url
           //editUrl: window.location.href // หรือ link ที่ต้องการให้เขากด
-        });        
+        };
+        
+        // ✅ 3. เรียกใช้ฟังก์ชันที่คุณแยกไว้ (วางตรงนี้)
+        const mainMsg = createPriceCheckFlex(messageData); 
+        const imageMsg = createPriceCheckImageOnlyFlex(messageData);
 
-        // 4. ดึง Group ID และส่ง LINE
+        // ✅ 4. รวมร่างเป็น Array เดียว (สูงสุด 5 บับเบิ้ลตามกฎ LINE แต่ละข้อความ)
+        const allMessages = [...mainMsg, ...imageMsg];
+
+        // 5. ดึง Group ID และส่ง LINE
         const groupId = await getBranchLineGroupId(currentUser?.branch ?? "ทดสอบ");
 
         if (!groupId) {
@@ -239,11 +270,19 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
         }
 
         // 4. ส่ง LINE
-          const res = await sendLinePush(groupId, [messages]);
-          console.log("LINE API Raw Response:", res); // ดูค่าที่ส่งกลับมาจริง ๆ
+        // ✅ 6. ส่ง Array ข้อมูล (allMessages) ไปที่ LINE
+        const res = await sendLinePush(groupId, allMessages);
+        console.log("LINE API Raw Response:", res); // ดูค่าที่ส่งกลับมาจริง ๆ
 
-          // แก้ไขเงื่อนไขการเช็คให้ครอบคลุม (บางครั้ง API คืน status 200 แต่ไม่มี success: true)
-          const isSuccess = res && (res.success === true || res.status === 200 || res.ok === true);
+        // แก้ไขเงื่อนไขการเช็คให้ครอบคลุม (บางครั้ง API คืน status 200 แต่ไม่มี success: true)
+        const isSuccess = res && (res.success === true || res.status === 200 || res.ok === true);
+
+        if (error) {
+          console.error("3. Edge Function ตอบกลับมาว่า Error:", error);
+          // บังคับให้เป็น any เพื่อเข้าถึง .message
+          alert(`ส่งไม่สำเร็จ: ${(error as any).message}`); 
+          return;
+        }
 
         // เช็กความสำเร็จ (รองรับทั้ง res.success หรือ res.status === 200)
         if (isSuccess) { 
@@ -275,12 +314,35 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
 
   // เพิ่มฟังก์ชันนี้ไว้ก่อน return ครับ
   const handleReset = () => {
-    reset(); // ล้างข้อมูล Form ทั้งหมดกลับไปค่า default
+    // 1. ล้างค่าใน React Hook Form กลับไปเป็นค่าว่างตาม defaultValues
+    reset({
+      brand: '',
+      vehicleType: '',
+      horsepower: '',
+      chassisNumber: '',
+      engineNumber: '',
+      year: '',
+      salePrice: 0,
+      images: [],
+      registration_image_url: '',
+      hasTrailer: false,
+      otherBrand: '',
+    });
+
+    // 2. ล้าง State ภายใน Component (Preview รูป และ สถานะปุ่ม LINE)
     setImagePreviews([]);
     setIsLineSent(false);
+
+    // 3. 🚨 จุดสำคัญ: ล้างค่าที่ Parent Component
     if (onSubmit) {
       onSubmit(null as any); 
     }
+
+    // 4. (ถ้ามี) ล้างค่า File Input ที่เป็น Native HTML
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    if (fileInput) fileInput.value = "";
+
+    // 5. เลื่อนหน้าจอขึ้นบนสุด
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -319,7 +381,7 @@ export function TruckPriceForm({ onSubmit, calculationResult, initialData }: Tru
                   <SelectContent>
                     {brands.map((type) => (
                       <SelectItem key={type.id} value={type.name}>
-                        {type.name}  {/* ✅ แก้จาก {type} เป็น {type.vehicletype} */}
+                        {type.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

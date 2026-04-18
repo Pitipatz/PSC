@@ -32,7 +32,6 @@ export default function LoginPage() {
   
   useEffect(() => {
     // 1. เช็ก Session เฉพาะตอนโหลด Component ครั้งแรกเท่านั้น
-    {/*
       const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
@@ -41,7 +40,6 @@ export default function LoginPage() {
       }
     };
     checkSession();
-    */}
 
     // 2. ดึงข้อมูล Remember Password (ทำครั้งเดียว)
     const savedEmail = localStorage.getItem('paisan_remembered_email');

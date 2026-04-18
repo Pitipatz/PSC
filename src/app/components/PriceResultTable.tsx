@@ -224,7 +224,7 @@ export function PriceResultTable({ data }: PriceResultTableProps) {
                   </TableCell>
                 </TableRow>
                 {loanAmounts.trailerAmount > 0 && (
-                  <div>
+                  <>
                     <TableRow className="bg-amber-50/30 hover:bg-amber-50">
                       <TableCell className="py-4 font-semibold text-amber-900">
                         <div className="flex items-center gap-2">
@@ -242,7 +242,7 @@ export function PriceResultTable({ data }: PriceResultTableProps) {
                         {formatCurrency(loanAmounts.leasePurchase + loanAmounts.trailerAmount)}
                       </TableCell>
                     </TableRow>
-                  </div>
+                  </>
                 )}
                 {/* บรรทัดยอดรวม (แนะนำให้เพิ่ม) */}
                 
@@ -252,14 +252,17 @@ export function PriceResultTable({ data }: PriceResultTableProps) {
 
           {/* Summary Box */}
           <div className="mt-8 p-6 bg-gradient-to-br from-[#001489] to-[#001a70] text-white rounded-2xl shadow-lg">
-            <div className="flex justify-between items-center">
-              <div>
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+              <div className="w-full sm:w-auto text-center sm:text-left">
                 <p className="text-sm opacity-80 mb-1">ราคาขาย</p>
                 <p className="text-3xl font-bold">{formatCurrency(salePrice)}</p>
                 <p className="text-xs opacity-70 mt-1">บาท</p>
               </div>
-              <div className="h-16 w-px bg-white/30"></div>
-              <div className="text-right">
+
+              {/* เส้นคั่น: แนวนอนบนมือถือ, แนวตั้งบนคอม */}
+              <div className="w-full h-px sm:w-px sm:h-16 bg-white/30"></div>
+
+              <div className="w-full sm:w-auto text-center sm:text-right">
                 <p className="text-sm opacity-80 mb-1">ราคากลาง</p>
                 <p className="text-3xl font-bold text-yellow-300">{formatCurrency(centralPrice)}</p>
                 <p className="text-xs opacity-70 mt-1">บาท</p>

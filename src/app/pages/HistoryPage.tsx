@@ -1,42 +1,22 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../utils/auth';
-// ✅ เพิ่มการ Import Card คอมโพเนนต์ให้ครบ (ตรวจสอบ Path ให้ถูกตามโปรเจกต์คุณ)
 import { Card, CardContent } from '../components/ui/card'; 
 import { Truck } from 'lucide-react';
-// ✅ เปลี่ยนเป็น 'react-router' ให้เหมือนกับ App.tsx เพื่อป้องกัน Error Context
-import { useNavigate } from 'react-router-dom'; 
-import { getCurrentUser, logoutUser } from '../utils/auth';
-import { Header } from '../components/Header';
+import { useOutletContext } from 'react-router-dom'; 
 
 
 export default function HistoryPage() {
-  const navigate = useNavigate();
+  const { setPageInfo } = useOutletContext<any>();
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);  
-  const [isInitializing, setIsInitializing] = useState(true);
 
-  // ดึงข้อมูล User และป้องกัน Error กรณีค่าเป็น null
-  const [user, setUser] = useState<any>(() => {
-    const curr = getCurrentUser();
-    return {
-      name: curr?.name || 'ผู้ใช้งาน',
-      branch: curr?.branch || 'ทั่วไป',
-      avatar_url: null // ใส่ค่าเริ่มต้นรอไว้
-    };
-  });
-  const timerRef = useRef<any>(null);
-  const INACTIVE_TIMEOUT = 60 * 60 * 1000; // 60 นาที
-
-  const handleAutoLogout = () => {
-    logoutUser();
-    navigate('/');
-    alert('เซสชันหมดอายุเนื่องจากไม่มีความเคลื่อนไหว กรุณาเข้าสู่ระบบใหม่');
-  };
-
-  const resetTimer = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(handleAutoLogout, INACTIVE_TIMEOUT);
-  };
+  useEffect(() => {
+    // ✅ สั่งเปลี่ยน Title ของ Header จากหน้านี้ได้เลย
+    setPageInfo({ 
+      title: 'ประวัติการตรวจสอบราคา', 
+      subtitle: 'Check Price History' 
+    });
+  }, [setPageInfo]);
 
   // ดึงข้อมูลจาก Supabase
   useEffect(() => {
@@ -58,61 +38,8 @@ export default function HistoryPage() {
     fetchLogs();
   }, []);
 
-  // --- Effects ---
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        // 1. เช็ค Session ก่อน
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          navigate('/', { replace: true });
-          return;
-        }
-
-        // 2. ดึงข้อมูลโปรไฟล์แบบละเอียด (เหมือนหน้า Profile)
-        const { data: profileData, error } = await supabase
-          .from('profiles')
-          .select('*, branches(name_th)')
-          .eq('id', session.user.id)
-          .single();
-
-        if (error) throw error;
-          // 3. เซ็ต State user ด้วยข้อมูลที่มีทั้งชื่อ, สาขา และ avatar_url
-          setUser({
-            id: profileData.id,
-            email: profileData.email,
-            name: `${profileData.first_name} ${profileData.last_name}`,
-            branch: profileData.branches?.name_th,
-            avatar_url: profileData.avatar_url
-          });
-
-        } catch (err) {
-          console.error("Auth error:", err);
-          navigate('/', { replace: true });
-        } finally {
-          setIsInitializing(false);
-        }
-      };
-      initAuth();
-      resetTimer();
-      const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
-      events.forEach(event => window.addEventListener(event, resetTimer));
-      return () => {
-        if (timerRef.current) clearTimeout(timerRef.current);
-        events.forEach(event => window.removeEventListener(event, resetTimer));
-      };
-    }, [navigate]);
-
-    if (isInitializing) return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="animate-spin rounded-full h-10 w-10 border-4 border-[#001489] border-t-transparent"></div>
-      </div>
-    );
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-      <Header user={user} title='ประวัติการตรวจสอบราคา' subtitle='Check Price History'/>
-
       <main className="max-w-7xl mx-auto px-8 py-10">
         {loading ? (
           <div className="text-center py-20">กำลังโหลดข้อมูล...</div>

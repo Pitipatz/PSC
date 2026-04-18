@@ -2,17 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { NavigationMenu } from './NavigationMenu';
 import { logoutUser } from '../utils/auth';
 
-interface HeaderProps {
-    user: {
-    name?: string;
-    branch?: string;
-    avatar_url?: string;
-  } | null;
-  title?: string;
-  subtitle?: string;
-}
-
-export function Header({ user, title, subtitle }: HeaderProps) {
+export function Header({ user, title, subtitle }: any) { 
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -56,7 +46,7 @@ export function Header({ user, title, subtitle }: HeaderProps) {
               </span>
               <span className="text-gray-300">|</span>
               <span className="text-[#001489] font-semibold">
-                {user?.branch || 'รอยืนยันสาขา'}
+                {user?.branches?.name_th || user?.branch || 'รอยืนยันสาขา'}
               </span>
             </div>
           </div>
@@ -74,4 +64,16 @@ export function Header({ user, title, subtitle }: HeaderProps) {
       </div>
     </header>
   );
+}
+
+export function Footer() {
+  return (
+    <footer className="bg-white border-t mt-16 py-8">
+      <div className="max-w-7xl mx-auto px-8 flex justify-between items-center opacity-50">
+        <img src="/Paisan_Logo.png" alt="Logo" className="h-10" />
+        <p>© 2026 Paisan Capital Company Limited.</p>
+      </div>
+    </footer>
+  );
+
 }
